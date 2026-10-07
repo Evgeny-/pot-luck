@@ -10,7 +10,9 @@
   - *casual*, which delivers when it can and otherwise parks at random;
   - *greedy*, which makes the best-looking move: deliver, else park what is needed soon and frees
     something;
-  - *planner*, which looks two moves ahead.
+  - *thinker*: for each of its 4 most natural moves, it imagines the next 5 moves of natural play
+    and avoids moves that jam the kitchen within that horizon. This is a person who thinks a few
+    moves ahead.
 - Every level also has its reference solution walked:
   - *critical* counts the steps where some other legal move loses;
   - *trap density* is the share of legal moves that lose, averaged over the line.
@@ -24,40 +26,40 @@ generator runs with detour 0.6 and tight 0.9.
 
 ## Results (40 levels per row)
 
-| Variant | Learn | Yield | Tiles | Random | Casual | Greedy | Planner | Critical | Trap density | 1st-move traps | Par |
+| Variant | Learn | Yield | Tiles | Random | Casual | Greedy | Thinker | Critical | Trap density | 1st-move traps | Par |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **Baseline** | 0 | 100% | 28 | 19% | 19% | 72% | 83% | 1.1 | 0.010 | 0% | 6.9 |
+| **Baseline** | 0 | 100% | 28 | 19% | 19% | 72% | 87% | 1.1 | 0.010 | 0% | 6.9 |
 | Baseline, loose generator | 0 | 100% | 28 | 30% | 34% | 91% | 99% | 0.2 | 0.002 | 0% | 4.5 |
 | 5×5, 20 tiles | 0 | 100% | 20 | 49% | 47% | 85% | 95% | 0.3 | 0.005 | 0% | 5.2 |
 | 7×7, 40 tiles | 0 | 90% | 40 | 3% | 3% | 44% | 72% | 3.3 | 0.034 | 13% | 10.4 |
-| Bowl 4 | 0 | 100% | 28 | 30% | 32% | 86% | 95% | 0.5 | 0.005 | 0% | 8.1 |
-| Bowl 2 | 0 | 100% | 28 | 8% | 9% | 61% | 81% | 2.2 | 0.018 | 0% | 5.4 |
-| Bowl 1 | 0 | 100% | 28 | 6% | 9% | 51% | 69% | 5.9 | 0.055 | 14% | 2.8 |
-| No bowl (B2) | 0 | 100% | 28 | 62% | 62% | 74% | 90% | 3.5 | 0.029 | 4% | 0 |
-| Hold bowl (items wait for their own pot) | 0 | 100% | 28 | 50% | 47% | 90% | 100% | 1.4 | 0.012 | 1% | 2.7 |
-| Hold bowl, 2 spots | 0 | 95% | 28 | 30% | 30% | 77% | 92% | 2.8 | 0.025 | 3% | 2.3 |
-| Router, player sends bowl items (tap) | 0 | 100% | 28 | 21% | 19% | 72% | 86% | 1.0 | 0.006 | 0% | 7.0 |
-| **Skewer** (last in, first out), 3 | 1 | 100% | 28 | 4% | 13% | 57% | 70% | **6.4** | 0.056 | 1% | 5.5 |
-| Skewer 4 | 1 | 98% | 28 | 2% | 12% | 59% | 74% | **8.1** | 0.067 | 6% | 6.8 |
+| Bowl 4 | 0 | 100% | 28 | 30% | 32% | 86% | 96% | 0.5 | 0.005 | 0% | 8.1 |
+| Bowl 2 | 0 | 100% | 28 | 8% | 9% | 61% | 91% | 2.2 | 0.018 | 0% | 5.4 |
+| Bowl 1 | 0 | 100% | 28 | 6% | 9% | 51% | 82% | 5.9 | 0.055 | 14% | 2.8 |
+| No bowl (B2) | 0 | 100% | 28 | 62% | 62% | 74% | 80% | 3.5 | 0.029 | 4% | 0 |
+| Hold bowl (items wait for their own pot) | 0 | 100% | 28 | 50% | 47% | 90% | 99% | 1.4 | 0.012 | 1% | 2.7 |
+| Hold bowl, 2 spots | 0 | 95% | 28 | 30% | 30% | 77% | 97% | 2.8 | 0.025 | 3% | 2.3 |
+| Router, player sends bowl items (tap) | 0 | 100% | 28 | 21% | 19% | 72% | 85% | 1.0 | 0.006 | 0% | 7.0 |
+| **Skewer** (last in, first out), 3 | 1 | 100% | 28 | 4% | 13% | 57% | 72% | **6.4** | 0.056 | 1% | 5.5 |
+| Skewer 4 | 1 | 98% | 28 | 2% | 12% | 59% | 68% | **8.1** | 0.067 | 6% | 6.8 |
 | Any-order dishes (R2) | 1 | 100% | 28 | 100% | 100% | 100% | 100% | 0 | 0 | 0% | 0 |
-| One any-order salad among strict pots | 1 | 100% | 28 | 17% | 19% | 72% | 70% | 2.1 | 0.015 | 1% | 5.8 |
-| Base-first dishes (R3) | 1 | 100% | 28 | 55% | 50% | 84% | 91% | 1.2 | 0.011 | 0% | 5.3 |
-| Dish queue, 2 × 4 per pot (R4) | 1 | 85% | 32 | 11% | 12% | 63% | 85% | 0.8 | 0.007 | 0% | 7.9 |
-| Many copies of an ingredient | 0 | 100% | 28 | 41% | 43% | 87% | 95% | 0.4 | 0.003 | 0% | 6.5 |
-| No copies | 0 | 100% | 28 | 14% | 15% | 62% | 80% | 1.0 | 0.010 | 0% | 7.2 |
-| Two pots + walls (E2) | 0 | 78% | 28 | 4% | 4% | 58% | 92% | 1.0 | 0.013 | 0% | 6.4 |
-| Split edges, 6 pots (E3) | 1 | 90% | 30 | 36% | 36% | 81% | 98% | 0.4 | 0.002 | 0% | 7.4 |
-| **Lid** (salad opens after the stew) (M7) | 1 | 100% | 28 | 5% | 5% | **37%** | 70% | 3.7 | 0.038 | 1% | 7.3 |
-| Stacked tiles, 6 stacks (M5) | 1 | 100% | 32 | 9% | 9% | 65% | 71% | 1.3 | 0.013 | 2% | 8.3 |
-| Turn pads, 2 (M3) | 2 | 100% | 28 | 17% | 18% | 75% | 90% | 1.2 | 0.012 | 2% | 7.0 |
-| Knife bar, 2 pots × 11 (M1) | 2 | 57% | 22 | 8% | 12% | 77% | 91% | 1.3 | 0.016 | 0% | 5.6 |
-| … the same without the knife (control) | 0 | 100% | 22 | 12% | 15% | 77% | 93% | 1.1 | 0.018 | 0% | 4.9 |
+| One any-order salad among strict pots | 1 | 100% | 28 | 17% | 19% | 72% | 90% | 2.1 | 0.015 | 1% | 5.8 |
+| Base-first dishes (R3) | 1 | 100% | 28 | 55% | 50% | 84% | 92% | 1.2 | 0.011 | 0% | 5.3 |
+| Dish queue, 2 × 4 per pot (R4) | 1 | 85% | 32 | 11% | 12% | 63% | 89% | 0.8 | 0.007 | 0% | 7.9 |
+| Many copies of an ingredient | 0 | 100% | 28 | 41% | 43% | 87% | 98% | 0.4 | 0.003 | 0% | 6.5 |
+| No copies | 0 | 100% | 28 | 14% | 15% | 62% | 86% | 1.0 | 0.010 | 0% | 7.2 |
+| Two pots + walls (E2) | 0 | 78% | 28 | 4% | 4% | 58% | 89% | 1.0 | 0.013 | 0% | 6.4 |
+| Split edges, 6 pots (E3) | 1 | 90% | 30 | 36% | 36% | 81% | 91% | 0.4 | 0.002 | 0% | 7.4 |
+| **Lid** (salad opens after the stew) (M7) | 1 | 100% | 28 | 5% | 5% | **37%** | 72% | 3.7 | 0.038 | 1% | 7.3 |
+| Stacked tiles, 6 stacks (M5) | 1 | 100% | 32 | 9% | 9% | 65% | 86% | 1.3 | 0.013 | 2% | 8.3 |
+| Turn pads, 2 (M3) | 2 | 100% | 28 | 17% | 18% | 75% | 91% | 1.2 | 0.012 | 2% | 7.0 |
+| Knife bar, 2 pots × 11 (M1) | 2 | 57% | 22 | 8% | 12% | 77% | 95% | 1.3 | 0.016 | 0% | 5.6 |
+| … the same without the knife (control) | 0 | 100% | 22 | 12% | 15% | 77% | 96% | 1.1 | 0.018 | 0% | 4.9 |
 | Frozen tiles, 5 (M9) | 1 | 100% | 28 | 17% | 17% | 59% | 82% | 1.1 | 0.010 | 1% | 7.2 |
 | Wild spice, 2 (M8) | 1 | 100% | 28 | 6% | 8% | 21% | 33% | 9.1 | **0.133** | **52%** | 7.8 |
-| Lid + bowl 2 | 1 | 100% | 28 | 3% | 4% | 40% | 79% | 4.5 | 0.049 | 2% | 5.2 |
-| Stacks + bowl 2 | 1 | 100% | 32 | 4% | 5% | 47% | 71% | 3.4 | 0.028 | 1% | 6.3 |
-| **Skewer + lid** | 2 | 95% | 28 | 1% | 6% | 48% | 77% | **7.5** | **0.089** | 3% | 5.6 |
-| 7×7 + bowl 2 | 0 | 78% | 40 | 1% | 1% | 41% | 75% | 3.6 | 0.024 | 1% | 7.4 |
+| Lid + bowl 2 | 1 | 100% | 28 | 3% | 4% | 40% | 84% | 4.5 | 0.049 | 2% | 5.2 |
+| Stacks + bowl 2 | 1 | 100% | 32 | 4% | 5% | 47% | 83% | 3.4 | 0.028 | 1% | 6.3 |
+| **Skewer + lid** | 2 | 95% | 28 | 1% | 6% | 48% | 75% | **7.5** | **0.089** | 3% | 5.6 |
+| 7×7 + bowl 2 | 0 | 78% | 40 | 1% | 1% | 41% | 91% | 3.6 | 0.024 | 1% | 7.4 |
 
 Yield is the share of seeds that produced a level. "Learn" is the number of extra rules a
 player must learn.
@@ -82,13 +84,14 @@ player must learn.
    bowl.
 4. **Twists ranked by depth for the rules they cost:**
    - **Skewer** (one rule: "only the last item in can come out"). It is the deepest single twist:
-     about 6–8 critical decisions per level, five to seven times the baseline. The order in which
-     you park now matters, not only what you park, and the rule is very easy to show on screen.
-   - **Lids** (one rule: "this pot opens when that one is served"). Greedy drops to 37%. Pots now
-     compete, and freeing the pot that pays off immediately is often wrong.
+     about 6–8 critical decisions per level, five to seven times the baseline, and the thinker
+     drops to about 70%. The order in which you park now matters, not only what you park, and the
+     rule is very easy to show on screen.
+   - **Lids** (one rule: "this pot opens when that one is served"). Greedy drops to 37% and the
+     thinker to 72%. Pots now compete, and freeing the pot that pays off immediately is often wrong.
    - **Stacks** (one rule: "there's another tile underneath"). They give a moderate gain on their
-     own (the planner drops to 71%) and become strong with a 2-spot bowl. They are also the
-     cheapest way to get more ingredients onto a phone-sized board.
+     own and become strong with a 2-spot bowl. They are also the cheapest way to get more
+     ingredients onto a phone-sized board.
    - **Frozen tiles** and **dish queues**: small gains.
    - **Turn pads** and the **knife bar**: no planning depth at all (compare the knife with its
      control). They make lanes harder to *read*, which the solver can't measure. Use them for
@@ -105,7 +108,11 @@ player must learn.
      allowed (G2), so it is shelved.
    - *Tap versus auto* bowl delivery: no difference in difficulty, so auto (fewer taps) is the
      default.
-6. **The effort metric doesn't separate variants here.** It gives 0.03–0.2 everywhere except the
+6. **What the thinker adds.** A player who looks 5 natural moves ahead wins 87% of baseline
+   levels, but only 68–75% with a skewer, lids or a 7×7 board. Those traps bite later than a
+   short look-ahead can see. An earlier version of the thinker imagined the *whole* rest of the
+   game for every move and won almost everything. That is superhuman, so the horizon was cut to 5.
+7. **The effort metric doesn't separate variants here.** It gives 0.03–0.2 everywhere except the
    wild spice. Its "natural" search uses the same strong heuristic as greedy, so it rarely
    backtracks. The campaign uses win rates and critical decisions instead.
 
