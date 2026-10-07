@@ -28,8 +28,11 @@ export class Game {
   private history: Sim[] = [];
   readonly view: BoardView;
   private cb: GameCallbacks;
-  private busy = 0;
   private autoTimer = 0;
+  private autoRun = 0;
+  private revision = 0;
+  private outcomeTimer = 0;
+  private hintTimer = 0;
   hintsUsed = 0;
   undos = 0;
 
@@ -46,8 +49,21 @@ export class Game {
   }
 
   dispose(): void {
-    clearTimeout(this.autoTimer);
+    this.cancelCallbacks();
     this.view.dispose();
+  }
+
+  private stopAuto(): void {
+    clearTimeout(this.autoTimer);
+    this.autoRun++;
+  }
+
+  /** Undo, restart and leaving the kitchen invalidate callbacks from the old position. */
+  private cancelCallbacks(): void {
+    this.revision++;
+    this.stopAuto();
+    clearTimeout(this.outcomeTimer);
+    clearTimeout(this.hintTimer);
   }
 
   get canUndo(): boolean {
@@ -67,6 +83,7 @@ export class Game {
 
   tap(id: number): void {
     if (this.sim.status !== 'playing') return;
+    this.stopAuto();
     this.view.hint(null);
     const c = this.sim.check(id);
     if (c !== 'ok') {
@@ -89,27 +106,35 @@ export class Game {
     this.move(id);
   }
 
-  private move(m: number): void {
+  private move(m: number): Promise<void> {
     this.history.push(this.sim.clone());
     const ev: SimEvent[] = [];
     this.sim.apply(m, ev);
-    this.busy++;
+    const revision = this.revision;
+    const won = this.sim.status === 'won';
+    const stuck = !won && this.sim.checkStuck();
+    const parks = this.sim.parks;
     const done = this.view.play(ev, this.sim);
     this.cb.changed();
-    if (this.sim.status === 'won') {
-      done.then(() => setTimeout(() => this.cb.won(starsFor(this.sim.parks, this.level.stats?.par ?? 0), this.sim.parks), 500));
-      audio.play('win');
-      return;
-    }
-    if (this.sim.checkStuck()) {
-      done.then(() => setTimeout(() => this.cb.stuck(), 300));
-    }
-    done.then(() => this.busy--);
+    return done.then(() => {
+      if (revision !== this.revision) return;
+      if (won) {
+        audio.play('win');
+        this.outcomeTimer = window.setTimeout(() => {
+          if (revision === this.revision) this.cb.won(starsFor(parks, this.level.stats?.par ?? 0), parks);
+        }, 500);
+      } else if (stuck) {
+        this.outcomeTimer = window.setTimeout(() => {
+          if (revision === this.revision) this.cb.stuck();
+        }, 300);
+      }
+    });
   }
 
   undo(): boolean {
     const prev = this.history.pop();
     if (!prev) return false;
+    this.cancelCallbacks();
     this.undos++;
     this.sim = prev;
     this.sim.unstick();
@@ -122,7 +147,7 @@ export class Game {
   }
 
   restart(): void {
-    clearTimeout(this.autoTimer);
+    this.cancelCallbacks();
     this.sim = Sim.fromLevel(this.level);
     this.history = [];
     this.view.hint(null);
@@ -140,7 +165,8 @@ export class Game {
       if (!isBowlMove(m)) {
         this.view.hint(m);
         this.press(m);
-        setTimeout(() => this.view.hideLane(), 1200);
+        clearTimeout(this.hintTimer);
+        this.hintTimer = window.setTimeout(() => this.view.hideLane(), 1200);
       }
       return;
     }
@@ -158,17 +184,20 @@ export class Game {
 
   /** Debug: plays a solution from the current position. */
   autoSolve(): void {
+    this.stopAuto();
     const res = solve(this.sim, 200000);
     if (res.status !== 'solved') {
       this.cb.say('No solution from here');
       return;
     }
     const moves = res.moves.slice();
-    const step = () => {
+    const run = this.autoRun;
+    const step = async () => {
+      if (run !== this.autoRun) return;
       const m = moves.shift();
       if (m === undefined || this.sim.status !== 'playing') return;
-      this.move(m);
-      this.autoTimer = window.setTimeout(step, 520);
+      await this.move(m);
+      if (run === this.autoRun && this.sim.status === 'playing') this.autoTimer = window.setTimeout(step, 100);
     };
     step();
   }

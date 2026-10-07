@@ -3,9 +3,11 @@ import { DISHES, INGREDIENTS, WILD_INFO } from '../core/ingredients';
 import type { Sim, SimEvent } from '../core/sim';
 import { DX, DY, WILD, formOf, ingOf, type Dir, type LevelDef, type Token } from '../core/types';
 import { ARROW_SVG, emoji, h } from '../ui/dom';
-import { ingredientHtml, tokenHtml } from '../ui/iconStyle';
+import { dishHtml, ingredientHtml, tokenHtml } from '../ui/iconStyle';
 import { frameFor } from '../ui/viewport';
 import { audio } from '../audio/audio';
+import { knifeBarSvg } from '../ui/knife';
+import { lanePoints, pathMetrics, recipientCurve, roundedPath, routeOutsideBoard, type Point, type Rect } from './flight';
 
 /**
  * The kitchen as DOM: a wooden board with ingredient tiles, an order ticket with a plate on every
@@ -45,7 +47,7 @@ export class BoardView {
   private g: Geometry;
   private boardEl: HTMLElement;
   private potEls: HTMLElement[] = [];
-  /** Per pot: the plate (kept across updates so its animations survive), the chips, the stamp and the lid badge. */
+  /** Per pot: the plate (kept across updates so its animations survive), recipe chips and lid badge. */
   private potParts: { plate: HTMLElement; strip: HTMLElement; extra: HTMLElement; icon: string }[] = [];
   private bowlEl: HTMLElement;
   /** Tied pairs: a tray under both tiles and two cords stitched across the seam. */
@@ -56,19 +58,27 @@ export class BoardView {
   private cell = 52;
   private chip = 24;
   private spot = 40;
+  private recipeGaps: number[] = [];
   /** Board origin (top-left of cell 0,0) in kitchen pixels. */
   private ox = 0;
   private oy = 0;
   private handlers: BoardHandlers;
   private pressed = -1;
   private sim: Sim;
+  /** What has visibly arrived, kept separate from the simulation's already-completed move. */
+  private shown: Sim;
+  private playQueue: Promise<void> = Promise.resolve();
+  private epoch = 0;
+  private disposed = false;
+  private animations = new Set<Animation>();
+  private timers = new Map<number, (() => void) | undefined>();
   private resizeObs: ResizeObserver;
   /** Chips that just got ticked (they animate once). */
   private fresh = new Set<string>();
-  private served = new Set<number>();
 
   constructor(parent: HTMLElement, sim: Sim, handlers: BoardHandlers) {
     this.sim = sim;
+    this.shown = sim.clone();
     this.level = sim.level;
     this.g = geometryOf(this.level);
     this.handlers = handlers;
@@ -85,7 +95,7 @@ export class BoardView {
     this.root.append(this.boardEl, this.bowlEl, this.tieUnder, this.tieOver);
     this.level.pots.forEach((p) => {
       const el = h('div', { class: `pot side-${p.side}` + (p.side === 1 || p.side === 3 ? ' vertical' : '') });
-      const parts = { plate: h('span', { class: 'plate' }), strip: h('span', { class: 'strip' }), extra: h('span'), icon: '' };
+      const parts = { plate: h('span', { class: 'plate' }), strip: h('span', { class: 'strip' }), extra: h('span', { style: 'display:contents' }), icon: '' };
       el.append(parts.plate, parts.strip, parts.extra);
       this.potEls.push(el);
       this.potParts.push(parts);
@@ -103,6 +113,8 @@ export class BoardView {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.cancelPlayback();
     this.resizeObs.disconnect();
     this.root.remove();
   }
@@ -112,7 +124,16 @@ export class BoardView {
   private bowlHeight(spot: number): number {
     const cap = this.sim.bowlCap;
     if (!cap) return 0;
-    return this.level.rules.bowlOrder === 'lifo' ? cap * (spot - 4) + 30 : spot + 18;
+    return this.level.rules.bowlOrder === 'lifo' ? cap * spot + 24 : spot + 18;
+  }
+
+  private ticketSize(pot: number): { width: number; height: number } {
+    const p = this.level.pots[pot];
+    const flat = p.side === 0 || p.side === 2;
+    const count = Math.max(...p.dishes.map((dish) => dish.items.length));
+    const recipe = count * this.chip + Math.max(0, count - 1) * (this.recipeGaps[pot] ?? 7);
+    const plate = this.chip * 1.55;
+    return flat ? { width: plate + recipe + 21, height: plate + 10 } : { width: plate + 10, height: plate + recipe + 21 };
   }
 
   private layout(): void {
@@ -124,38 +145,65 @@ export class BoardView {
     const nSide = (sides.has(1) ? 1 : 0) + (sides.has(3) ? 1 : 0);
     const nTB = (sides.has(0) ? 1 : 0) + (sides.has(2) ? 1 : 0);
     const areaW = W - fr.left - fr.right;
-    const midH = H - fr.top - fr.bottom;
+    const lidSpace = this.level.pots.some((pot) => pot.side === 0 && pot.lid !== undefined) ? 18 : 0;
+    const midH = H - fr.top - fr.bottom - lidSpace;
     const jar = this.level.rules.bowlOrder === 'lifo';
     const cap = this.sim.bowlCap;
-    // The tickets and the bowl scale with the cell size (chip ≈ 0.44 cell, spot ≈ 0.8 cell). Tall
-    // screens put the bowl under the board, wide ones beside it on the left.
+    // Tickets and the bowl scale with the cell size; tall screens keep recipe chips larger.
+    // The bowl sits under the board on tall screens and beside it on wide ones.
     const side = fr.wide && cap > 0;
     const bowlRows = cap && !side ? (jar ? cap * 0.8 + 0.4 : 0.95) : 0;
     const bowlCols = side ? 1.15 : 0;
-    const byW = (areaW - 20 - 2 * PAD - nSide * (GAP + 14) - (side ? 2 * GAP + 30 : 0)) / (w + 0.7 * nSide + bowlCols);
-    const byH = (midH - 2 * PAD - nTB * (GAP + 14) - 24) / (hh + 0.7 * nTB + bowlRows);
-    const cell = Math.max(30, Math.min(fr.wide ? 118 : 96, Math.floor(Math.min(byW, byH))));
+    const knifeLeft = this.level.bars?.some((bar) => bar.kind === 'knife' && bar.axis === 'h' && bar.from === 0) ? 32 : 0;
+    const chipRatio = fr.wide ? 0.44 : 0.58;
+    const horizontalTickets = nTB * 1.55 * chipRatio;
+    const byW = (areaW - 20 - 2 * PAD - nSide * (GAP + 14) - (side ? 2 * GAP + 30 : 0) - knifeLeft) / (w + 1.55 * chipRatio * nSide + bowlCols);
+    const byH = (midH - 2 * PAD - nTB * (GAP + 17) - 24) / (hh + horizontalTickets + bowlRows);
+    let cell = Math.max(30, Math.min(fr.wide ? 118 : 96, Math.floor(Math.min(byW, byH))));
     this.cell = cell;
-    this.chip = Math.max(18, Math.min(46, Math.round(cell * 0.44)));
+    this.chip = Math.max(fr.wide ? 18 : 26, Math.min(fr.wide ? 46 : 52, Math.round(cell * chipRatio)));
     this.spot = Math.max(32, Math.min(84, Math.round(cell * 0.8)));
-    // Long recipes shrink their chips to fit: across the screen for top/bottom tickets, along the
-    // board for side tickets. Dishes after the current one are drawn smaller.
-    const weight = (p: LevelDef['pots'][0]) =>
-      p.dishes.reduce((a, d, i) => a + d.items.length * (i === 0 ? (d.order === 'strict' ? 1 : 1.25) : 0.72), 0) + (p.dishes.length - 1) * 0.8 + 2.4;
+    // Size for the longest recipe, but show one current recipe. Later ingredients appear when
+    // their dish starts, keeping the required food readable without a second row.
     for (const p of this.level.pots) {
       const flat = p.side === 0 || p.side === 2;
-      const room = flat ? areaW - 30 : hh * cell + 2 * PAD + 40;
-      this.chip = Math.max(14, Math.min(this.chip, Math.floor(room / weight(p)) - 3));
+      const longest = Math.max(...p.dishes.map((dish) => dish.items.length));
+      const coefficient = 1.55 + longest;
+      const room = flat ? areaW - 8 : midH - (cap && !side ? this.bowlHeight(this.spot) + 16 : 0) - 24;
+      const fixed = 21 + Math.max(0, longest - 1) * 7;
+      this.chip = Math.max(fr.wide ? 14 : 26, Math.min(this.chip, Math.floor((room - fixed) / coefficient)));
     }
-    const ticket = this.chip * 1.55 + 12;
+    this.recipeGaps = this.level.pots.map((pot) => {
+      if (pot.side === 1 || pot.side === 3) return 7;
+      const count = Math.max(...pot.dishes.map((dish) => dish.items.length));
+      return count > 1 ? Math.max(2, Math.min(7, Math.floor((areaW - 8 - this.chip * 1.55 - 21 - count * this.chip) / (count - 1)))) : 7;
+    });
+    const ticketSizes = this.level.pots.map((_, i) => this.ticketSize(i));
+    const sideSize = (direction: Dir, dimension: 'width' | 'height') => Math.max(0, ...this.level.pots.map((pot, i) => pot.side === direction ? ticketSizes[i][dimension] : 0));
+    const leftTicket = sideSize(3, 'width');
+    const rightTicket = sideSize(1, 'width');
+    const topTicket = sideSize(0, 'height');
+    const bottomTicket = sideSize(2, 'height');
+    // Minimum recipe sizes can exceed the proportional ticket estimate on a narrow screen.
+    // Fit the board to the actual ticket widths while preserving readable recipe icons.
+    const maxCellW = Math.floor((areaW - 8 - 2 * PAD - leftTicket - rightTicket - nSide * GAP - (side ? this.spot + 34 + 2 * GAP : 0) - knifeLeft) / w);
+    cell = Math.min(cell, Math.max(24, maxCellW));
+    this.cell = cell;
+    this.spot = Math.max(32, Math.min(84, Math.round(cell * 0.8)));
     const bw = w * cell + 2 * PAD;
     const bh = hh * cell + 2 * PAD;
     const bowlW = side ? this.spot + 34 : 0;
-    const leftOfBoard = (sides.has(3) ? ticket + GAP : 0) + (side ? bowlW + 2 * GAP : 0);
-    const blockW = bw + leftOfBoard + (sides.has(1) ? ticket + GAP : 0);
-    const blockH = bh + (sides.has(0) ? ticket + GAP : 0) + (sides.has(2) ? ticket + GAP : 0) + (cap && !side ? this.bowlHeight(this.spot) + 16 : 0);
+    const leftOfBoard = (leftTicket ? leftTicket + GAP : 0) + (side ? bowlW + 2 * GAP : 0) + knifeLeft;
+    const blockW = bw + leftOfBoard + (rightTicket ? rightTicket + GAP : 0);
+    const coreH = Math.max(bh, sideSize(1, 'height'), sideSize(3, 'height'));
+    const overshoot = (coreH - bh) / 2;
+    const topBand = topTicket ? topTicket + GAP : 0;
+    const bottomBand = bottomTicket ? bottomTicket + GAP + 4 : 0;
+    const storageGap = GAP + 10 + (jar ? 12 : 0);
+    const blockH = coreH + topBand + bottomBand + (cap && !side ? this.bowlHeight(this.spot) + storageGap : 0);
     const left = Math.round(fr.left + (areaW - blockW) / 2 + leftOfBoard);
-    const top = Math.round(fr.top + Math.max(0, (midH - blockH) / 2) + (sides.has(0) ? ticket + GAP : 0));
+    const coreTop = fr.top + lidSpace + Math.max(0, (midH - blockH) / 2) + topBand;
+    const top = Math.round(coreTop + overshoot);
     this.root.style.setProperty('--cell', `${cell}px`);
     this.root.style.setProperty('--chip', `${this.chip}px`);
     this.root.style.setProperty('--spot', `${this.spot}px`);
@@ -187,8 +235,17 @@ export class BoardView {
       this.boardEl.append(el);
     }
     for (const b of this.level.bars ?? []) {
+      const span = (b.to - b.from) * cell;
+      if (b.kind === 'knife') {
+        const thickness = Math.max(26, Math.min(46, cell * 0.38));
+        const el = h('div', { class: `bar knife ${b.axis}`, html: knifeBarSvg(span, b.axis), attrs: { title: 'Knife: ingredients crossing the blade arrive chopped.', 'aria-label': 'Knife: crossing chops ingredients' } });
+        if (b.axis === 'h') Object.assign(el.style, { left: `${PAD + b.from * cell - 32}px`, top: `${PAD + b.at * cell - thickness / 2}px`, width: `${span + 32}px`, height: `${thickness}px` });
+        else Object.assign(el.style, { left: `${PAD + b.at * cell - thickness / 2}px`, top: `${PAD + b.from * cell - 32}px`, width: `${thickness}px`, height: `${span + 32}px` });
+        this.boardEl.append(el);
+        continue;
+      }
       const el = h('div', { class: 'bar' + (b.kind === 'heat' ? ' heat' : '') });
-      const icon = h('div', { class: 'bar-icon', html: emoji(b.kind === 'knife' ? 'kitchen-knife' : 'fire') });
+      const icon = h('div', { class: 'bar-icon', html: emoji('fire') });
       if (b.axis === 'h') {
         Object.assign(el.style, { left: `${PAD + b.from * cell - 4}px`, top: `${PAD + b.at * cell - 4}px`, width: `${(b.to - b.from) * cell + 8}px`, height: '8px' });
         Object.assign(icon.style, { left: `${PAD + b.from * cell - 6}px`, top: `${PAD + b.at * cell}px` });
@@ -205,18 +262,18 @@ export class BoardView {
       let x: number;
       let y: number;
       let tf: string;
-      if (p.side === 0) [x, y, tf] = [this.ox + mid * cell, top - GAP, 'translate(-50%, -100%)'];
-      else if (p.side === 2) [x, y, tf] = [this.ox + mid * cell, top + bh + GAP + 4, 'translate(-50%, 0)'];
-      else if (p.side === 3) [x, y, tf] = [left - GAP, this.oy + mid * cell, 'translate(-100%, -50%)'];
+      if (p.side === 0) [x, y, tf] = [this.ox + mid * cell, coreTop - GAP, 'translate(-50%, -100%)'];
+      else if (p.side === 2) [x, y, tf] = [this.ox + mid * cell, coreTop + coreH + GAP + 4, 'translate(-50%, 0)'];
+      else if (p.side === 3) [x, y, tf] = [left - GAP - knifeLeft, this.oy + mid * cell, 'translate(-100%, -50%)'];
       else [x, y, tf] = [left + bw + GAP, this.oy + mid * cell, 'translate(0, -50%)'];
       Object.assign(el.style, { left: `${x}px`, top: `${y}px`, transform: tf });
     });
     this.bowlEl.classList.toggle('side', side);
     if (side) {
-      const x = left - (sides.has(3) ? ticket + GAP : 0) - GAP - bowlW / 2;
+      const x = left - (leftTicket ? leftTicket + GAP : 0) - GAP - bowlW / 2 - knifeLeft;
       Object.assign(this.bowlEl.style, { left: `${x}px`, top: `${top + bh / 2}px`, transform: 'translate(-50%, -50%)' });
     } else {
-      const bowlTop = top + bh + GAP + 10 + (sides.has(2) ? ticket + GAP : 0) + (jar ? 12 : 0);
+      const bowlTop = coreTop + coreH + bottomBand + storageGap;
       Object.assign(this.bowlEl.style, { left: `${left + bw / 2}px`, top: `${bowlTop}px`, transform: 'translate(-50%, 0)' });
     }
     for (const el of [this.tieUnder, this.tieOver]) {
@@ -235,21 +292,40 @@ export class BoardView {
   private centerOf(el: Element): [number, number] {
     const r = el.getBoundingClientRect();
     const k = this.root.getBoundingClientRect();
-    return [r.left + r.width / 2 - k.left, r.top + r.height / 2 - k.top];
+    // DOM rectangles are viewport pixels; our waypoints and transforms use kitchen pixels.
+    const sx = this.root.clientWidth / k.width || 1;
+    const sy = this.root.clientHeight / k.height || 1;
+    return [(r.left + r.width / 2 - k.left) * sx, (r.top + r.height / 2 - k.top) * sy];
+  }
+
+  private boardRect(): Rect {
+    return { left: this.ox - PAD, top: this.oy - PAD, right: this.ox + this.level.w * this.cell + PAD, bottom: this.oy + this.level.h * this.cell + PAD };
   }
 
   private plateOf(pot: number): Element {
     return this.potParts[pot].plate;
   }
 
+  /** Food lands on the exact recipe ingredient being filled, including after a dish change. */
+  private targetOf(pot: number, item: number): Element {
+    return this.potParts[pot].strip.querySelector(`.chip[data-dish="${this.shown.potDish[pot]}"][data-item="${item}"] .c-icon`) ?? this.plateOf(pot);
+  }
+
+  private widthOf(el: Element): number {
+    const r = el.getBoundingClientRect();
+    const root = this.root.getBoundingClientRect();
+    return r.width * (this.root.clientWidth / root.width || 1);
+  }
+
   // ---------------------------------------------------------------- state
 
   sync(sim: Sim, full = false): void {
     this.sim = sim;
+    if (full) this.cancelPlayback();
+    this.shown = sim.clone();
     if (full) {
       for (const el of this.tiles.values()) el.remove();
       this.tiles.clear();
-      this.served = new Set(this.level.pots.map((_, i) => i).filter((i) => sim.potDone(i)));
     }
     for (const t of this.level.tiles) {
       const show = sim.present[t.id] && sim.isTop(t.id);
@@ -271,15 +347,15 @@ export class BoardView {
 
   private makeTile(id: number, popIn: boolean): HTMLElement {
     const t = this.level.tiles[id];
-    const tok = this.sim.tileToken(id);
+    const tok = this.shown.tileToken(id);
     const el = h('div', { class: 'tile', style: `--c:${tokenColor(tok)}` });
     const pic = t.ing * 4 === WILD ? emoji(WILD_INFO.icon) : ingredientHtml(t.ing);
     el.innerHTML =
       `<div class="tile-body"><div class="tile-icon">${pic}</div>` +
-      `<div class="tile-arrow" style="--rot:${t.dir * 90}deg">${ARROW_SVG}</div>${formBadge(tok)}</div>`;
+      `<div class="tile-arrow" style="--rot:${t.dir * 90}deg">${ARROW_SVG}</div></div>`;
     const below = this.level.tiles.filter((o) => o.x === t.x && o.y === t.y && (o.z ?? 0) < (t.z ?? 0)).sort((a, b) => (b.z ?? 0) - (a.z ?? 0))[0];
     if (below) {
-      const ut = this.sim.tileToken(below.id);
+      const ut = this.shown.tileToken(below.id);
       el.classList.add('has-under');
       el.style.setProperty('--uc', tokenColor(ut));
       const uPic = below.hidden ? emoji('red-question-mark') : ingredientHtml(below.ing);
@@ -302,27 +378,27 @@ export class BoardView {
       if (this.pressed === id) this.endPress(-1);
     });
     this.root.append(el);
-    if (popIn) el.animate([{ scale: '0.6', opacity: 0 }, { scale: '1', opacity: 1 }], { duration: 260, easing: 'cubic-bezier(.2,1.5,.4,1)' });
+    if (popIn) this.animate(el, [{ scale: '0.6', opacity: 0 }, { scale: '1', opacity: 1 }], { duration: 260, easing: 'cubic-bezier(.2,1.5,.4,1)' });
     return el;
   }
 
   private updateTile(id: number): void {
     const el = this.tiles.get(id)!;
-    const frozen = this.sim.isFrozen(id);
+    const frozen = this.shown.isFrozen(id);
     el.classList.toggle('frozen', frozen);
     let ice = el.querySelector('.ice');
     if (frozen && !ice) {
       ice = h('div', { class: 'ice', html: emoji('ice') });
       el.append(ice);
     } else if (!frozen && ice) ice.remove();
-    const covered = this.sim.isCovered(id);
+    const covered = this.shown.isCovered(id);
     el.classList.toggle('covered', covered);
     let cl = el.querySelector('.cloche');
     if (covered && !cl) {
       cl = h('div', { class: 'cloche', html: CLOCHE_SVG });
       el.querySelector('.tile-body')!.append(cl);
     } else if (!covered && cl) cl.remove();
-    const left = this.sim.timerLeft(id);
+    const left = this.shown.timerLeft(id);
     el.classList.toggle('timed', left > 0);
     let tm = el.querySelector<HTMLElement>('.timer');
     if (left > 0) {
@@ -347,7 +423,7 @@ export class BoardView {
       if (t.link === undefined || seen.has(t.link)) continue;
       seen.add(t.link);
       const o = this.level.tiles.find((u) => u !== t && u.link === t.link);
-      if (!o || !this.sim.present[t.id] || !this.sim.present[o.id]) continue;
+      if (!o || !this.shown.present[t.id] || !this.shown.present[o.id]) continue;
       const [ax, ay] = this.at(t.y * this.level.w + t.x);
       const [bx, by] = this.at(o.y * this.level.w + o.x);
       const out = c * 0.035;
@@ -395,6 +471,7 @@ export class BoardView {
     const want: number[] = [];
     this.level.pots.forEach((p, i) => {
       const el = this.potEls[i];
+      const anchor = this.potParts[i].icon ? this.centerOf(this.potParts[i].plate) : null;
       const done = sim.potDone(i);
       const cur = Math.min(sim.potDish[i], p.dishes.length - 1);
       sim.wants(i, want);
@@ -403,24 +480,24 @@ export class BoardView {
       const info = DISHES[dish.kind] ?? DISHES.soup;
       const parts: string[] = [];
       p.dishes.forEach((d, di) => {
-        if (di < cur && !done) return;
-        if (done && di < p.dishes.length - 1) return;
-        if (di > cur) parts.push(`<span class="dish-sep" title="${(DISHES[d.kind] ?? DISHES.soup).en}">${emoji((DISHES[d.kind] ?? DISHES.soup).icon)}</span>`);
+        if (di !== cur) return;
+        const recipe: string[] = [];
         const got = di === cur ? sim.potGot[i] : 0;
         d.items.forEach((t, k) => {
           const isDone = done || (di === cur && (got >> k) & 1);
           let cls = 'chip';
           if (isDone) cls += ' done' + (this.fresh.has(`${i}:${di}:${k}`) ? ' fresh' : '');
           else if (di === cur && open && want.includes(t) && (d.order !== 'strict' ? true : sim.acceptIndex(i, t) === k)) cls += d.order === 'strict' ? ' next' : ' free';
-          else if (di > cur) cls += ' later';
-          parts.push(`<span class="${cls}" style="--c:${tokenColor(t)}"><span class="c-icon">${tokenHtml(t)}</span>${formBadge(t)}</span>`);
+          recipe.push(`<span class="${cls}" data-dish="${di}" data-item="${k}" style="--c:${tokenColor(t)}"><span class="c-icon">${tokenHtml(t)}</span>${formBadge(t)}</span>`);
         });
+        parts.push(`<span class="recipe current" data-dish="${di}" style="gap:${this.recipeGaps[i] ?? 7}px">${recipe.join('')}</span>`);
       });
       const pp = this.potParts[i];
-      if (pp.icon !== info.icon) {
-        pp.plate.innerHTML = emoji(info.icon);
+      const picture = dishHtml(dish.kind) + (done ? '<span class="served-mark" aria-label="Dish ready"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>' : '');
+      if (pp.icon !== picture) {
+        pp.plate.innerHTML = picture;
         pp.plate.title = info.en;
-        pp.icon = info.icon;
+        pp.icon = picture;
       }
       const strip = parts.join('');
       if (pp.strip.dataset.html !== strip) {
@@ -428,7 +505,6 @@ export class BoardView {
         pp.strip.dataset.html = strip;
       }
       let extra = '';
-      if (done) extra += `<span class="stamp${this.served.has(i) ? '' : ' fresh'}">SERVED</span>`;
       if (p.lid !== undefined && !open) {
         const other = this.level.pots[p.lid];
         const icon = DISHES[other.dishes[other.dishes.length - 1].kind]?.icon ?? 'pot-of-food';
@@ -438,9 +514,23 @@ export class BoardView {
         pp.extra.innerHTML = extra;
         pp.extra.dataset.html = extra;
       }
-      if (done) this.served.add(i);
       el.classList.toggle('done', done);
       el.classList.toggle('closed', p.lid !== undefined && !open);
+      // A shrinking recipe ticket keeps its plate in the same place throughout the delivery.
+      if (anchor) {
+        const position = this.centerOf(pp.plate);
+        el.style.left = `${parseFloat(el.style.left) + anchor[0] - position[0]}px`;
+        el.style.top = `${parseFloat(el.style.top) + anchor[1] - position[1]}px`;
+      }
+      if (p.side === 0 || p.side === 2) {
+        const frame = frameFor(this.root.clientWidth, this.root.clientHeight);
+        const half = this.widthOf(el) / 2;
+        const min = frame.left + half + 4;
+        const max = this.root.clientWidth - frame.right - half - 4;
+        const center = this.centerOf(el)[0];
+        const x = min <= max ? Math.max(min, Math.min(max, center)) : (this.root.clientWidth + frame.left - frame.right) / 2;
+        el.style.left = `${parseFloat(el.style.left) + x - center}px`;
+      }
     });
     this.fresh.clear();
   }
@@ -512,7 +602,7 @@ export class BoardView {
     const body = el.querySelector('.tile-body') as HTMLElement;
     const dx = DX[t.dir] * this.cell * 0.12;
     const dy = DY[t.dir] * this.cell * 0.12;
-    body.animate([
+    this.animate(body, [
       { translate: '0 0' }, { translate: `${dx}px ${dy}px`, offset: 0.3 }, { translate: `${-dx * 0.3}px ${-dy * 0.3}px`, offset: 0.65 }, { translate: '0 0' },
     ], { duration: 280, easing: 'ease-out' });
   }
@@ -533,160 +623,257 @@ export class BoardView {
   /** Animates a batch of events; resolves when the board has caught up. */
   play(events: SimEvent[], sim: Sim): Promise<void> {
     this.sim = sim;
-    if (events.some((e) => e.t === 'slide' && e.partner)) this.renderTwine();
-    let t = 0;
-    let end = 0;
-    const slideEnd = new Map<number, number>();
+    const after = sim.clone();
+    const epoch = this.epoch;
+    // Rapid taps and debug autoplay can finish several simulation moves before a flight lands.
+    // Each batch retains its own state and waits for the preceding visual deliveries.
+    const done = this.playQueue.then(() => this.playEvents(events, after, epoch));
+    this.playQueue = done.catch(() => {});
+    return done;
+  }
+
+  private async playEvents(events: SimEvent[], after: Sim, epoch: number): Promise<void> {
+    if (epoch !== this.epoch || this.disposed) return;
     for (const e of events) {
+      if (epoch !== this.epoch || this.disposed) return;
       if (e.t === 'slide') {
-        const delay = e.partner ? 90 : 0;
-        const dur = this.slide(e, delay);
-        t = Math.max(t, delay + dur);
-        end = Math.max(end, t + 120);
-        if (e.into === 'bowl') slideEnd.set(e.slot, delay + dur);
-        else this.tick(e.pot, e.item, delay + dur);
+        if (e.partner && !await this.pause(90)) return;
+        const cell = this.shown.s.cell[e.tile];
+        this.shown.present[e.tile] = 0;
+        this.shown.occ[cell]--;
+        this.shown.left--;
+        this.renderTwine();
+        if (!await this.slide(e)) return;
+        if (e.into === 'pot') this.tick(e.pot, e.item, e.token);
+        else {
+          this.shown.bowlTok[e.slot] = e.token;
+          this.shown.bowlLen++;
+          this.renderBowl(this.shown);
+          this.bowlEl.querySelector(`.spot[data-k="${e.slot}"]`)?.classList.add('land');
+          audio.play('park', { pitch: 0.95 + Math.random() * 0.1 });
+        }
       } else if (e.t === 'bowlOut') {
-        const start = Math.max(slideEnd.get(e.slot) ?? 0, t) + 80;
-        const dur = 360;
-        setTimeout(() => this.fly(e.slot, e.pot, e.token), start);
-        this.tick(e.pot, e.item, start + dur);
-        t = start + dur;
-        end = Math.max(end, t + 80);
+        if (!await this.pause(90) || !await this.fly(e.slot, e.pot, e.token, e.item)) return;
+        this.tick(e.pot, e.item, e.token);
       } else if (e.t === 'dish') {
-        setTimeout(() => this.serve(e.pot, e.last), t + 40);
-        end = Math.max(end, t + 700);
+        // Show the last recipe tick on the dish it completed before revealing the next recipe.
+        if (!await this.pause(110)) return;
+        this.serve(e.pot, e.last);
+        if (!e.last && !await this.pause(240)) return;
+        this.shown.potDish[e.pot] = e.dish + 1;
+        this.shown.potGot[e.pot] = 0;
+        this.renderPots(this.shown);
+        const mark = this.potParts[e.pot].plate.querySelector('.served-mark');
+        if (mark) this.animate(mark, [{ scale: '0.4', opacity: 0 }, { scale: '1', opacity: 1 }], { duration: 220, easing: 'ease-out' });
       } else if (e.t === 'lid') {
-        setTimeout(() => {
-          const pe = this.potEls[e.pot];
-          pe.querySelector('.lid')?.animate([{ transform: 'translateX(-50%)' }, { transform: 'translate(-50%, -24px) rotate(-14deg)', opacity: 0 }], { duration: 500, fill: 'forwards', easing: 'ease-in' });
-          this.steam(...this.centerOf(this.plateOf(e.pot)));
-          audio.play('lid');
-        }, t + 250);
-        end = Math.max(end, t + 800);
+        this.steam(...this.centerOf(this.plateOf(e.pot)));
+        audio.play('lid');
       } else if (e.t === 'uncover') {
-        setTimeout(() => this.liftCloche(e.tile), 60);
-      } else if (e.t === 'unlock') {
-        setTimeout(() => {
-          this.tiles.get(e.tile)?.querySelector('.tile-body')?.animate([{ filter: 'brightness(1.5)' }, { filter: 'brightness(1)' }], { duration: 420 });
-          audio.play('unlock');
-        }, t + 60);
-      } else if (e.t === 'thaw') {
-        this.tiles.get(e.tile)?.animate([{ filter: 'brightness(1.6)' }, { filter: 'brightness(1)' }], { duration: 400 });
-        setTimeout(() => audio.play('thaw'), 80);
+        this.liftCloche(e.tile);
+        if (this.tiles.has(e.tile)) this.updateTile(e.tile);
+      } else if (e.t === 'unlock' || e.t === 'thaw') {
+        const el = this.tiles.get(e.tile);
+        if (el) {
+          this.updateTile(e.tile);
+          this.animate(el, [{ filter: 'brightness(1.5)' }, { filter: 'brightness(1)' }], { duration: 400 });
+        }
+        audio.play(e.t === 'unlock' ? 'unlock' : 'thaw');
+      } else if (e.t === 'reveal') {
+        if (!this.tiles.has(e.tile)) this.tiles.set(e.tile, this.makeTile(e.tile, true));
       } else if (e.t === 'won') {
-        setTimeout(() => this.confetti(), t + 250);
+        this.confetti();
       }
     }
-    // Tiles that just became the top of their stack, locks that changed, and the twine.
-    setTimeout(() => {
-      for (const tl of this.level.tiles) {
-        if (!this.sim.present[tl.id] || !this.sim.isTop(tl.id)) continue;
-        if (!this.tiles.has(tl.id)) this.tiles.set(tl.id, this.makeTile(tl.id, true));
-        this.updateTile(tl.id);
-      }
-      this.renderTwine();
-    }, 120);
-    return new Promise((res) => setTimeout(() => {
-      this.renderPots(this.sim);
-      this.renderBowl(this.sim);
-      res();
-    }, end));
+    if (epoch !== this.epoch || this.disposed) return;
+    this.shown = after;
+    this.refreshTiles();
+    this.renderPots(this.shown);
+    this.renderBowl(this.shown);
+    await this.pause(120);
   }
 
-  /** A recipe chip gets its tick when the ingredient lands. */
-  private tick(pot: number, item: number, at: number): void {
-    const p = this.level.pots[pot];
-    // The dish may have been served by this very delivery: the chip belongs to the dish it filled.
-    const filledLast = this.sim.potDone(pot) || (this.sim.potGot[pot] === 0 && this.sim.potDish[pot] > 0);
-    const dish = Math.min(p.dishes.length - 1, filledLast ? this.sim.potDish[pot] - 1 : this.sim.potDish[pot]);
-    this.fresh.add(`${pot}:${dish}:${item}`);
-    setTimeout(() => this.renderPots(this.sim), at);
+  private refreshTiles(): void {
+    for (const t of this.level.tiles) {
+      const visible = this.shown.present[t.id] && this.shown.isTop(t.id);
+      if (!visible) { this.tiles.get(t.id)?.remove(); this.tiles.delete(t.id); continue; }
+      if (!this.tiles.has(t.id)) this.tiles.set(t.id, this.makeTile(t.id, true));
+      this.updateTile(t.id);
+    }
+    this.renderTwine();
   }
 
-  private slide(e: Extract<SimEvent, { t: 'slide' }>, delay: number): number {
+  /** A recipe chip gets its tick only after its ingredient has reached that recipe icon. */
+  private tick(pot: number, item: number, token: Token): void {
+    const arrival = this.centerOf(this.targetOf(pot, item));
+    this.fresh.add(`${pot}:${this.shown.potDish[pot]}:${item}`);
+    this.shown.potGot[pot] |= 1 << item;
+    this.shown.delivered++;
+    this.renderPots(this.shown);
+    this.land(pot, item, token, arrival);
+  }
+
+  private async slide(e: Extract<SimEvent, { t: 'slide' }>): Promise<boolean> {
+    const epoch = this.epoch;
     const el = this.tiles.get(e.tile);
     this.tiles.delete(e.tile);
-    if (!el) return 0;
+    if (!el) return true;
+    // Entry scale is an individual CSS transform; letting it compose with this translation
+    // can pull a rapidly revealed tile away from its lane.
+    for (const animation of el.getAnimations()) animation.cancel();
     el.querySelector('.cloche')?.remove();
     const t = this.level.tiles[e.tile];
-    // Waypoints: the start, every cell where the lane turns, and one cell beyond the edge.
-    const pts: [number, number][] = [this.at(t.y * this.level.w + t.x)];
-    let dir: Dir = t.dir;
-    let prev = t.y * this.level.w + t.x;
-    for (const c of e.cells) {
-      const pad = this.g.pad[c];
-      if (pad >= 0 && pad !== dir) {
-        pts.push(this.at(c));
-        dir = pad as Dir;
-      }
-      prev = c;
-    }
-    const [lx, ly] = this.at(prev);
-    pts.push([lx + DX[dir] * this.cell * 1.0, ly + DY[dir] * this.cell * 1.0]);
-    const target = e.into === 'pot'
-      ? this.centerOf(this.plateOf(e.pot))
-      : this.centerOf(this.bowlEl.querySelector(`.spot[data-k="${e.slot}"]`) ?? this.bowlEl);
-    const half = this.cell / 2;
-    let dist = 0;
-    for (let i = 1; i < pts.length; i++) dist += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-    const last = pts[pts.length - 1];
-    const flyDist = Math.hypot(target[0] - last[0], target[1] - last[1]);
-    const total = dist + flyDist;
-    const frames: Keyframe[] = [];
-    let acc = 0;
-    for (let i = 0; i < pts.length; i++) {
-      if (i) acc += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-      frames.push({ transform: `translate(${pts[i][0] - half}px, ${pts[i][1] - half}px) scale(1)`, offset: total ? (acc / total) * 0.82 : 0, easing: 'ease-in' });
-    }
-    // A little hop into the plate (or bowl), shrinking as it drops in.
-    const mx = (last[0] + target[0]) / 2;
-    const my = Math.min(last[1], target[1]) - this.cell * 0.35;
-    frames.push({ transform: `translate(${mx - half}px, ${my - half}px) scale(0.7) rotate(${e.into === 'pot' ? 12 : -8}deg)`, offset: 0.91 });
-    frames.push({ transform: `translate(${target[0] - half}px, ${target[1] - half}px) scale(${e.into === 'pot' ? 0.32 : 0.62}) rotate(0deg)`, opacity: e.into === 'pot' ? 0.4 : 1, offset: 1 });
-    const dur = Math.max(320, Math.min(900, 220 + total * 0.95));
+    const body = el.querySelector<HTMLElement>('.tile-body')!;
+    const icon = el.querySelector<HTMLElement>('.tile-icon')!;
+    const size = icon.clientWidth;
+    const anchor: Point = [this.cell / 2, this.cell * 0.4824];
+    const iconOffset = anchor[1] - this.cell / 2;
+    const lane = lanePoints(this.g, t.y * this.level.w + t.x, e.cells, t.dir, (c) => {
+      const point = this.at(c);
+      return [point[0], point[1] + iconOffset];
+    }, this.boardRect());
+    const last = lane.points[lane.points.length - 1];
+    const spot = this.bowlEl.querySelector<HTMLElement>(`.spot[data-k="${e.slot}"]`);
+    const targetEl = e.into === 'pot' ? this.targetOf(e.pot, e.item) : spot ?? this.bowlEl;
+    const target = this.centerOf(targetEl);
+    const flight = e.into === 'pot' ? recipientCurve(last, target, lane.direction, this.cell) : this.bowlRoute(last, target, lane.direction);
+    const points = [...lane.points, ...flight.slice(1)];
+    const laneLength = pathMetrics(lane.points).total;
+    const endSize = e.into === 'pot' ? this.widthOf(targetEl) : (spot?.clientWidth ?? this.spot) * 0.76;
+    // A copy of the picture stays put while its enamel tile and arrow fade away at the edge.
+    // Its final size exactly matches the bowl icon, avoiding the old landing size jump.
+    icon.style.visibility = 'hidden';
+    el.querySelector('.under')?.remove();
+    el.append(h('span', { html: tokenHtml(e.token), style: `position:absolute;left:${anchor[0] - size / 2}px;top:${anchor[1] - size / 2}px;width:${size}px;height:${size}px;filter:drop-shadow(0 2px 0 rgba(60,30,10,.2))` }));
+    el.style.transformOrigin = `${anchor[0]}px ${anchor[1]}px`;
+    const motion = this.motion(points, anchor, endSize / size, laneLength, e.into === 'pot');
+    const edgeOffset = motion.laneOffset;
+    this.animate(body, [{ opacity: 1, offset: 0 }, { opacity: 1, offset: Math.max(0, edgeOffset - 120 / motion.duration) }, { opacity: 0, offset: edgeOffset }, { opacity: 0, offset: 1 }], { duration: motion.duration, fill: 'forwards', easing: 'linear' });
     el.classList.add('flyer');
     el.style.zIndex = '20';
-    setTimeout(() => audio.play(e.partner ? 'link' : 'slide', { volume: 0.6 }), delay);
-    el.animate(frames, { duration: dur, delay, easing: 'linear', fill: 'forwards' }).finished.then(() => {
-      el.remove();
-      if (e.into === 'pot') this.land(e.pot, e.token);
-      else {
-        this.renderBowl(this.sim);
-        const spot = this.bowlEl.querySelector(`.spot[data-k="${e.slot}"]`);
-        spot?.classList.add('land');
-        audio.play('park', { pitch: 0.95 + Math.random() * 0.1 });
-      }
-    });
-    return dur + delay;
+    const jar = e.into === 'bowl' && this.level.rules.bowlOrder === 'lifo';
+    if (jar) this.bowlEl.classList.add('pouring');
+    audio.play(e.partner ? 'link' : 'slide', { volume: 0.6 });
+    const landed = await this.animate(el, motion.frames, { duration: motion.duration, easing: 'linear', fill: 'forwards' }).finished;
+    el.remove();
+    if (jar && epoch === this.epoch) this.bowlEl.classList.remove('pouring');
+    return landed;
   }
 
-  /** The ingredient drops into the pot: the plate squashes, a few drops splash. */
-  private land(pot: number, token: Token): void {
-    const plate = this.plateOf(pot);
-    plate.classList.remove('squash');
-    void (plate as HTMLElement).offsetWidth;
-    plate.classList.add('squash');
-    const [x, y] = this.centerOf(plate);
+  /** The required ingredient acknowledges its delivery; the dish stays still until it is served. */
+  private land(pot: number, item: number, token: Token, arrival: Point): void {
+    const chip = this.targetOf(pot, item).closest('.chip');
+    if (chip) this.animate(chip, [{ scale: '1' }, { scale: '1.12', offset: 0.35 }, { scale: '1' }], { duration: 250, easing: 'ease-out' });
+    const [x, y] = arrival;
     this.drops(x, y, tokenColor(token));
     audio.play('plop', { pitch: 0.9 + Math.random() * 0.25 });
   }
 
-  private fly(slot: number, pot: number, token: Token): void {
+  /** The jar is filled through its mouth, rather than through the side of the glass. */
+  private bowlMouth(): Point {
+    const center = this.centerOf(this.bowlEl);
+    return [center[0], center[1] - this.bowlEl.clientHeight / 2 - 10];
+  }
+
+  private bowlRoute(from: Point, to: Point, dir: Dir): Point[] {
+    const clearance = Math.max(this.cell * 0.3, this.spot * 0.42);
+    const outside: Point = [from[0] + DX[dir] * clearance, from[1] + DY[dir] * clearance];
+    const jar = this.level.rules.bowlOrder === 'lifo';
+    const mouth = jar ? this.bowlMouth() : to;
+    const approach: Point = [mouth[0], mouth[1] - (jar ? clearance : this.spot * 0.45)];
+    const around = routeOutsideBoard(outside, approach, this.boardRect(), clearance);
+    const points = [from, ...around, mouth];
+    if (jar) points.push(to);
+    return roundedPath(points, clearance * 0.55);
+  }
+
+  /** Sample by travelled distance; scale and opacity change only during the final transfer. */
+  private motion(route: Point[], anchor: Point, endScale: number, laneLength: number, fade: boolean): { frames: Keyframe[]; duration: number; laneOffset: number } {
+    const points: Point[] = [route[0]];
+    for (let i = 1; i < route.length; i++) {
+      const a = route[i - 1]; const b = route[i];
+      const steps = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 22));
+      for (let k = 1; k <= steps; k++) points.push([a[0] + (b[0] - a[0]) * k / steps, a[1] + (b[1] - a[1]) * k / steps]);
+    }
+    const { lengths, total } = pathMetrics(points);
+    const laneTime = laneLength / 1.2;
+    const flightLength = Math.max(0, total - laneLength);
+    const time = laneTime + flightLength / 1.6 || 1;
+    const frames: Keyframe[] = points.map((point, i) => {
+      const progress = flightLength ? Math.max(0, (lengths[i] - laneLength) / flightLength) : 1;
+      const eased = progress * progress * (3 - 2 * progress);
+      const scale = 1 + (endScale - 1) * eased;
+      const elapsed = Math.min(lengths[i], laneLength) / 1.2 + Math.max(0, lengths[i] - laneLength) / 1.6;
+      return { transform: `translate(${point[0] - anchor[0]}px, ${point[1] - anchor[1]}px) scale(${scale})`, opacity: fade ? 1 - Math.max(0, (progress - 0.86) / 0.14) : 1, offset: elapsed / time };
+    });
+    frames[0].offset = 0;
+    frames[frames.length - 1].offset = 1;
+    return { frames, duration: Math.max(300, Math.min(1800, Math.round(time))), laneOffset: laneTime / time };
+  }
+
+  private async fly(slot: number, pot: number, token: Token, item: number): Promise<boolean> {
+    const epoch = this.epoch;
+    const jar = this.level.rules.bowlOrder === 'lifo';
+    if (jar) {
+      this.bowlEl.classList.add('pouring');
+      if (!await this.pause(120)) return false;
+    }
     const spot = this.bowlEl.querySelector(`.spot[data-k="${slot}"]`) ?? this.bowlEl;
-    const from = this.centerOf(spot);
-    const to = this.centerOf(this.plateOf(pot));
-    spot.querySelector('.s-icon')?.remove();
-    const size = this.spot * 0.8;
+    const picture = spot.querySelector('.s-icon');
+    const from = this.centerOf(picture ?? spot);
+    const target = this.targetOf(pot, item);
+    const to = this.centerOf(target);
+    const size = picture ? this.widthOf(picture) : (spot as HTMLElement).clientWidth * 0.76;
+    const clearance = Math.max(this.cell * 0.3, size * 0.55);
+    const mouth = this.bowlMouth();
+    const lead: Point[] = jar ? [from, mouth, [mouth[0], mouth[1] - clearance]] : [from];
+    const route = routeOutsideBoard(lead[lead.length - 1], to, this.boardRect(), clearance);
+    const points = roundedPath([...lead, ...route.slice(1)], clearance * 0.55);
     const el = h('div', { class: 'flyer', html: tokenHtml(token), style: `width:${size}px;height:${size}px` });
+    el.style.transformOrigin = `${size / 2}px ${size / 2}px`;
     this.root.append(el);
+    this.shown.bowlTok[slot] = -1;
+    this.shown.bowlLen--;
+    this.renderBowl(this.shown);
     audio.play('bowlOut');
-    el.animate([
-      { transform: `translate(${from[0] - size / 2}px, ${from[1] - size / 2}px) scale(1)` },
-      { transform: `translate(${(from[0] + to[0]) / 2 - size / 2}px, ${Math.min(from[1], to[1]) - size / 2 - 50}px) scale(1.1)`, offset: 0.5 },
-      { transform: `translate(${to[0] - size / 2}px, ${to[1] - size / 2}px) scale(0.45)`, opacity: 0.5 },
-    ], { duration: 360, easing: 'ease-in-out', fill: 'forwards' }).finished.then(() => {
-      el.remove();
-      this.land(pot, token);
+    const motion = this.motion(points, [size / 2, size / 2], this.widthOf(target) / size, 0, true);
+    const landed = await this.animate(el, motion.frames, { duration: motion.duration, easing: 'linear', fill: 'forwards' }).finished;
+    el.remove();
+    if (jar && epoch === this.epoch) this.bowlEl.classList.remove('pouring');
+    return landed;
+  }
+
+  /** Pending waits resolve on cancellation so undo, restart and resizing never leave a queue stuck. */
+  private cancelPlayback(): void {
+    this.epoch++;
+    this.pressed = -1;
+    this.hideLane();
+    this.playQueue = Promise.resolve();
+    for (const animation of this.animations) animation.cancel();
+    this.animations.clear();
+    for (const [id, cancel] of this.timers) { window.clearTimeout(id); cancel?.(); }
+    this.timers.clear();
+    this.root.querySelectorAll('.flyer,.cloche-fly,.drop,.steam,.confetti').forEach((el) => el.remove());
+    this.root.querySelectorAll('.serve,.squash').forEach((el) => el.classList.remove('serve', 'squash'));
+    this.bowlEl.classList.remove('pouring');
+    this.fresh.clear();
+  }
+
+  private animate(el: Element, frames: Keyframe[] | PropertyIndexedKeyframes, options: KeyframeAnimationOptions): { finished: Promise<boolean> } {
+    const animation = el.animate(frames, options);
+    this.animations.add(animation);
+    const finished = animation.finished.then(() => true, () => false).then((done) => { this.animations.delete(animation); return done; });
+    return { finished };
+  }
+
+  private later(action: () => void, delay: number): void {
+    const id = window.setTimeout(() => { this.timers.delete(id); if (!this.disposed) action(); }, delay);
+    this.timers.set(id, undefined);
+  }
+
+  private pause(delay: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const id = window.setTimeout(() => { this.timers.delete(id); resolve(true); }, delay);
+      this.timers.set(id, () => resolve(false));
     });
   }
 
@@ -710,23 +897,24 @@ export class BoardView {
     this.root.append(fly);
     el.classList.remove('covered');
     el.querySelector('.cloche')?.remove();
-    el.querySelector('.tile-icon')?.animate([{ scale: '0.4', opacity: 0 }, { scale: '1', opacity: 1 }], { duration: 320, easing: 'cubic-bezier(.2,1.5,.4,1)' });
-    fly.animate([{ transform: 'translateY(0) rotate(0)', opacity: 1 }, { transform: `translateY(${-this.cell * 0.9}px) rotate(-18deg)`, opacity: 0 }], { duration: 520, easing: 'ease-out', fill: 'forwards' }).finished.then(() => fly.remove());
+    const icon = el.querySelector('.tile-icon');
+    if (icon) this.animate(icon, [{ scale: '0.4', opacity: 0 }, { scale: '1', opacity: 1 }], { duration: 320, easing: 'cubic-bezier(.2,1.5,.4,1)' });
+    this.animate(fly, [{ transform: 'translateY(0) rotate(0)', opacity: 1 }, { transform: `translateY(${-this.cell * 0.9}px) rotate(-18deg)`, opacity: 0 }], { duration: 520, easing: 'ease-out', fill: 'forwards' }).finished.then(() => fly.remove());
     this.steam(x, y - this.cell * 0.2);
     audio.play('reveal');
   }
 
   private drops(x: number, y: number, color: string): void {
-    for (let i = 0; i < 6; i++) {
-      const d = h('div', { class: 'drop', style: `left:${x - 3}px;top:${y - 3}px;background:${color}` });
+    for (let i = 0; i < 4; i++) {
+      const d = h('div', { class: 'drop', style: `left:${x - 2}px;top:${y - 2}px;width:4px;height:4px;background:${color}` });
       this.root.append(d);
-      const a = -Math.PI / 2 + (i - 2.5) * 0.45 + (Math.random() - 0.5) * 0.3;
-      const r = 18 + Math.random() * 16;
-      d.animate([
+      const a = -Math.PI / 2 + (i - 1.5) * 0.55 + (Math.random() - 0.5) * 0.2;
+      const r = 8 + Math.random() * 8;
+      this.animate(d, [
         { transform: 'translate(0,0) scale(1)', opacity: 1 },
         { transform: `translate(${Math.cos(a) * r}px, ${Math.sin(a) * r}px) scale(0.9)`, opacity: 1, offset: 0.55 },
         { transform: `translate(${Math.cos(a) * r * 1.3}px, ${Math.sin(a) * r + 16}px) scale(0.4)`, opacity: 0 },
-      ], { duration: 460, easing: 'cubic-bezier(.2,.7,.4,1)', fill: 'forwards' }).finished.then(() => d.remove());
+      ], { duration: 320, easing: 'cubic-bezier(.2,.7,.4,1)', fill: 'forwards' }).finished.then(() => d.remove());
     }
   }
 
@@ -734,7 +922,7 @@ export class BoardView {
     for (let i = 0; i < 3; i++) {
       const s = h('div', { class: 'steam', style: `left:${x - 9 + (i - 1) * 10}px;top:${y - 14}px` });
       this.root.append(s);
-      s.animate([
+      this.animate(s, [
         { transform: 'translateY(0) scale(0.6)', opacity: 0 },
         { transform: 'translateY(-14px) scale(1)', opacity: 0.9, offset: 0.3 },
         { transform: `translateY(-46px) translateX(${(i - 1) * 6}px) scale(1.5)`, opacity: 0 },
@@ -749,7 +937,7 @@ export class BoardView {
       this.root.append(c);
       const a = (i / 10) * Math.PI * 2;
       const r = 30 + Math.random() * 20;
-      c.animate([
+      this.animate(c, [
         { transform: 'translate(0,0) scale(1)', opacity: 1 },
         { transform: `translate(${Math.cos(a) * r}px, ${Math.sin(a) * r}px) scale(0.3)`, opacity: 0 },
       ], { duration: 600, easing: 'cubic-bezier(.2,.7,.4,1)', fill: 'forwards' }).finished.then(() => c.remove());
@@ -757,19 +945,18 @@ export class BoardView {
   }
 
   confetti(): void {
-    const r = this.boardEl.getBoundingClientRect();
-    const k = this.root.getBoundingClientRect();
+    const r = this.boardRect();
     const colors = ['#ffc23d', '#ee5a3c', '#4cb35d', '#2aa79b', '#d6457a', '#3d5a9e'];
     for (let b = 0; b < 5; b++) {
-      setTimeout(() => {
-        const x = r.left - k.left + Math.random() * r.width;
-        const y = r.top - k.top + Math.random() * r.height * 0.6;
+      this.later(() => {
+        const x = r.left + Math.random() * (r.right - r.left);
+        const y = r.top + Math.random() * (r.bottom - r.top) * 0.6;
         for (let i = 0; i < 14; i++) {
           const c = h('div', { class: 'confetti', style: `background:${colors[i % colors.length]};left:${x}px;top:${y}px` });
           this.root.append(c);
           const a = Math.random() * Math.PI * 2;
           const rr = 40 + Math.random() * 80;
-          c.animate([
+          this.animate(c, [
             { transform: 'translate(0,0) rotate(0deg)', opacity: 1 },
             { transform: `translate(${Math.cos(a) * rr}px, ${Math.sin(a) * rr + 60}px) rotate(${Math.random() * 540}deg)`, opacity: 0 },
           ], { duration: 900 + Math.random() * 500, easing: 'cubic-bezier(.2,.7,.4,1)', fill: 'forwards' }).finished.then(() => c.remove());

@@ -1,76 +1,74 @@
-# 🍲 Pot Luck
+# Pot Luck
 
-A cozy kitchen puzzle and a food tour around the world. Tap an ingredient and it slides off the
-board the way its arrow points, straight into the pot on that side, if nothing is in its way.
-Every pot wants its recipe **in order**. An ingredient that arrives too early waits in a tiny side
-bowl, and the bowl starts with a single spot. Think ahead, or the kitchen jams.
+Cook each recipe by sliding its ingredients off a wooden board. The arrow on a tile tells you
+where it will go. Plan the order before the side bowl fills up.
 
-- No timer, no move limit, unlimited undo
-- 60 levels in six kitchens: Italy, Japan, Mexico, a US diner, India and China, each with its own
-  ingredients, dishes, look and music
-- Spicy levels 🌶 every 5th and extra spicy 🌶🌶 every 10th, with breathers in between
-- New ideas along the way:
-  - the salad bowl;
-  - stacked tiles;
-  - ingredients tied with twine;
-  - lids;
-  - cloches;
-  - the jar;
-  - kitchen timers;
-  - two-dish pots;
-  - turn pads;
-  - the knife bar.
-- Three stars for a perfect cook: use the bowl as rarely as possible
+**[Play Pot Luck in your browser](https://evgeny.io/games/pot-luck/)**
+
+There are 60 levels across six kitchens, from an Italian trattoria to a Chinese dim sum house.
+Each kitchen brings different ingredients and its own music. Play on a phone or desktop; your
+progress stays in your browser.
+
+<p>
+  <img src="docs/screenshots/desktop-kitchen.jpg" width="620" alt="Pot Luck on desktop: ingredient stickers on a wooden board, recipe tickets and a knife that chops ingredients crossing its blade">
+  <img src="docs/screenshots/mobile-kitchen.jpg" width="230" alt="Pot Luck on a phone: recipes around the board, a glass storage jar and Undo, Hint and Restart controls">
+</p>
+
+## How to play
+
+- Tap an ingredient to slide it in the direction of its arrow. A tile blocking its path must leave first.
+- Follow the green rings on each recipe. They mark the ingredients that dish can take now.
+- Early ingredients wait in the side bowl until a recipe needs them. Space is limited. The glass jar releases the last ingredient added first.
+- Press and hold a tile to preview its path. Undo is unlimited, and Hint shows a move toward a solution.
+
+Use the bowl sparingly to earn more stars. Later kitchens hide ingredients under cloches and tie
+pairs of tiles together. Turn pads redirect food. Sliding across a knife chops an ingredient for
+recipes that need it.
+
+## Run locally
+
+```bash
+npm ci
+npm run dev
+```
+
+Open [localhost:5190](http://localhost:5190/).
+
+```bash
+npm test       # Rules, campaign solutions and animation sequencing
+npm run build  # TypeScript checks and the production build
+```
 
 ## Development
 
-```bash
-npm install
-npm run dev      # http://localhost:5190
-npm test         # rules, and every level replays its stored solution
-npm run build    # typecheck + production build
-```
+The game uses TypeScript and Vite. Its rules and solver live in `src/core/`; `BoardView` animates
+the simulation's events. Artwork is generated locally with Z-Image Turbo through mflux.
+All 32 ingredients have icons in the free Sticker set.
 
-URL flags:
+Useful URL flags:
 
-- `?level=N` opens a level;
-- `?debug=1` shows each level's difficulty on the map, the difficulty curve, per-level stats in the
-  HUD, and an auto-solve 🐞 button;
-- `?progress=N` unlocks levels up to N;
-- `?reset` clears saved progress.
+| Flag | What it does |
+| --- | --- |
+| `?level=N` | Open a specific level |
+| `?debug=1` | Show difficulty stats and the auto-solve control |
+| `?debug=0` | Hide developer controls |
+| `?progress=N` | Unlock levels up to N |
+| `?icons=sticker` | Preview an art set; also accepts `kawaii`, `watercolor` or `retro` |
+| `?reset` | Clear saved progress |
 
-Content and experiments (they use [Bun](https://bun.sh)):
-
-```bash
-bun scripts/build-levels.ts 1-60          # generate levels → .cache/levels (skips finished ones)
-bun scripts/build-levels.ts merge         # → src/data/levels.json
-bun scripts/build-levels.ts report        # the difficulty curve as text
-bun scripts/experiment.ts                 # rule experiments (PART=k/8 to run in parallel)
-bun scripts/experiment.ts table           # results table
-bun scripts/traps.ts base,skewer3,lids    # find "tempting move loses" examples
-bun scripts/build-icons.ts                # Fluent emoji → src/ui/emoji.generated.ts
-```
-
-Generated art (Z-Image Turbo, locally through mflux):
+Level generation and experiments use [Bun](https://bun.sh):
 
 ```bash
-python3 scripts/art/scenes.py > .cache/art/jobs.jsonl
-uv run --no-project --with mflux python scripts/art/generate.py .cache/art/jobs.jsonl .cache/art/gen
-bun scripts/art/render-emoji.ts
-uv run --no-project --with pillow --with numpy python scripts/art/tiles.py
-bun scripts/art/review.ts                 # → _review/art/index.html
-python3 scripts/art/styles.py > .cache/art/styles.jsonl   # six candidate icon styles (30 images)
-uv run --no-project --with mflux python scripts/art/generate.py .cache/art/styles.jsonl .cache/art/styles
-uv run --no-project --with pillow --with numpy python scripts/art/styles-tiles.py
-bun scripts/art/styles-review.ts          # → _review/style/index.html
+bun scripts/build-levels.ts 1-60  # Generate levels into .cache/levels
+bun scripts/build-levels.ts merge
+bun scripts/build-levels.ts report
+bun scripts/experiment.ts
 ```
 
-More documentation in `docs/`:
+Read [the design notes](docs/DESIGN.md) for the campaign and mechanics.
+[The art handoff](docs/ART-HANDOFF.md) covers prompts and the local generation pipeline, including
+the remaining dish art. [Experiments](docs/EXPERIMENTS.md) document how the rules affect puzzle depth.
+[Deployment](docs/DEPLOYMENT.md) explains the publishing workflow.
 
-- [docs/PLAN.md](docs/PLAN.md): what was reused from Pixel Picnic and why;
-- [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md): which rules make players think;
-- [docs/DESIGN.md](docs/DESIGN.md): the rules, how difficulty is measured, the campaign curve and
-  the open questions.
-
-<sub>Icons: [Fluent Emoji](https://github.com/microsoft/fluentui-emoji) (MIT). Font: [Baloo 2](https://fonts.google.com/specimen/Baloo+2) (OFL 1.1).
-Sound is synthesized with the Web Audio API.</sub>
+Asset credits and licence notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Sound is synthesized with the Web Audio API.

@@ -55,9 +55,9 @@ The mechanics, in the order the campaign introduces them:
 | 26 | cloche | Hidden and stuck until a neighbouring tile leaves | A silver dome that lifts off with steam |
 | 31 | jar | Last in, first out | A glass jar; the top item glows |
 | 36 | timer | Unlocks after N more deliveries | A kitchen-timer badge counting down |
-| 41 | two dishes | A pot cooks two recipes in a row | The second dish's chips are drawn smaller, after its icon |
+| 41 | two dishes | A pot cooks two recipes in a row | The current recipe is shown; the next recipe appears when it is ready to cook |
 | 46 | turn pads | A sliding tile turns to the pad's arrow | A yellow pad; the lane preview shows the bend |
-| 51 | knife bar | Crossing it chops the ingredient | A steel bar; chopped chips carry a knife |
+| 51 | knife | Crossing it chops the ingredient | A tapered steel blade with a riveted wooden handle; chopped chips carry a knife |
 
 ## The campaign: a world food tour
 
@@ -177,31 +177,30 @@ The goal was a look of its own, so that Pot Luck and Pixel Picnic feel like sibl
 - **Type:** Baloo 2 (OFL), not Nunito.
 - **Tiles:** enamel, each in its ingredient's colour with a white glaze rim and a cream arrow
   badge.
-- **Pots:** order tickets with a plate.
-- **The bowl:** a ceramic bowl; the jar is glass with a red lid.
-- **Boosters:** spice jars on a wooden shelf, instead of the purple dock.
+- **Pots:** order tickets with a plate. Food lands on the required recipe ingredient, then its tick appears. Mobile recipe icons are larger. Each ticket shows one recipe; the next appears when the current dish is complete.
+- **Board:** warm wood for each cuisine, with curved grain, faint knots and a routed groove around the rim.
+- **Storage:** a ceramic bowl or a glass jar with a red cap. The jar has a wider neck, soft glass highlights and a badge on the next ingredient, preserving the last-in, first-out rule.
+- **Actions:** enamel buttons with readable Undo, Hint and Restart labels, beneath the board on phones and beside it on wide screens.
+- **Finished dishes:** a small green check at the plate's edge leaves the dish picture visible.
 - **Dialogs:** recipe cards with a ruled paper texture, a red margin line and a tape-like title.
 - **Backgrounds** change per cuisine: red gingham, indigo waves, talavera tiles, diner checks,
   block-print rosettes and a lattice. The board's wood changes with them.
-- **Map:** the world food tour described above.
+- **Map:** the world food tour described above. Restaurant signs sit without hanging rope stubs; ingredient props use the equipped art set.
 - **Sound:** synthesized kitchen sounds and generative music per cuisine (Italian mandolin
   tremolo, koto on a Japanese scale, marimba, a diner jukebox, a tanpura drone with sitar plucks,
   guzheng glissandi).
 
-**Icon styles.** The prototype still uses Fluent emoji. `_review/style/index.html` puts five
-ingredients on the game's tiles in six generated styles (sticker, kawaii, clay, watercolor, retro
-diner, ceramic tile) and five emoji sets. Kawaii and clay give the ingredients faces and
-personality, which no Pixel Picnic asset has. In development, `?icons=kawaii` (or `sticker`,
-`clay`, `watercolor`, `retro`, `ceramic`) swaps the five generated ingredients into the game itself,
-for example on level 7 in Italy:
+**Icon styles.** Sticker is the free default and covers all 32 ingredients. Kawaii, Watercolor and
+Retro Diner are paid sets with five samples each; missing pictures fall back to Sticker. Dishes
+currently use Fluent emoji until their art batch is generated. `_review/style/index.html` retains
+the original style comparison. Use `?icons=sticker`, `kawaii`, `watercolor` or `retro` to preview an
+equipped set. Local generation commands and remaining work are in [ART-HANDOFF.md](ART-HANDOFF.md).
 
 <img src="screenshots/kawaii-preview.jpg" width="260" alt="Level 7 with kawaii tomatoes, cheese and mushrooms">
 
 ## Open questions
 
-1. **Icon direction.** See the style page. My pick is kawaii or sticker for ingredients, with the
-   same style for dish icons. A full set is about 40 ingredients and dishes, roughly 40 minutes of
-   local generation.
+1. **Dish art.** The next Sticker batch is the 27 dishes. The paid sets each need 54 more pictures.
 2. **Is the curve right?** Normal levels are now noticeably harder. The first chapter should be
    playtested for frustration, especially levels 4–7 with a single bowl spot.
 3. **Router or hold bowl** (from v1): arrows can still "lie" (a tile pointing at a pot that doesn't
@@ -217,4 +216,3 @@ for example on level 7 in Italy:
 - endless mode;
 - a hint worker (the hint solves on the main thread, 50–300 ms);
 - long tiles and sticky dough;
-- generated art in the game itself (only on the review page).

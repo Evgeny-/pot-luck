@@ -1,0 +1,24 @@
+Pot Luck: third-party icon and font notices
+
+Microsoft Fluent Emoji Flat
+Copyright (c) Microsoft Corporation.
+Source: https://github.com/microsoft/fluentui-emoji
+License: MIT; the full notice is in Fluent-Emoji-MIT.txt.
+Food icon viewBoxes were adjusted for optical centring.
+
+Baloo 2
+Copyright 2019 The Baloo 2 Project Authors (https://github.com/EkType/Baloo2)
+License: SIL Open Font License 1.1; the full notice is in Baloo-2-OFL-1.1.txt.
+The game imports the font through @fontsource-variable/baloo-2.
+
+Nunito project dependency
+Copyright 2014 The Nunito Project Authors (https://github.com/googlefonts/nunito)
+License: SIL Open Font License 1.1; the full notice is in Nunito-OFL-1.1.txt.
+
+Generated illustration provenance
+The illustrations under art/ were generated locally with Z-Image Turbo through
+mflux, using mflux-community/z-image-turbo-mflux-q4. This statement records how
+the images were made and assigns no model or tool license to generated images.
+Model: https://huggingface.co/Tongyi-MAI/Z-Image-Turbo
+Generator: https://github.com/mflux-community/mflux
+Checkpoint: https://huggingface.co/mflux-community/z-image-turbo-mflux-q4

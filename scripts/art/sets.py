@@ -3,6 +3,7 @@
 usage: python3 scripts/art/sets.py sticker > .cache/art/sets.jsonl          (new pictures only)
        python3 scripts/art/sets.py sticker --all > .cache/art/sets.jsonl    (also redo the five style samples)
        python3 scripts/art/sets.py sticker --only dishes                    (ingredients | dishes)
+       python3 scripts/art/sets.py sticker --only ingredients --redo onion  (new ingredients plus a replacement)
 
 Sets: sticker, kawaii, watercolor, retro (prompt templates in styles.py). Ids are <set>-<key>, the
 key being the ingredient or dish key from src/core/ingredients.ts, which is what cut.py and the game
@@ -19,7 +20,7 @@ from styles import STYLES  # noqa: E402
 # onion tile gets a purple onion, a white garlic tile a white bulb.
 INGREDIENTS = {
     'tomato': 'a ripe red tomato with a green stem',
-    'onion': 'a purple red onion',
+    'onion': 'a single round purple red onion bulb with curved purple skin stripes, a short dry tan stem and tiny roots, no green leaves',
     'carrot': 'an orange carrot with green leaves',
     'garlic': 'a white garlic bulb',
     'mushroom': 'a brown cap mushroom',
@@ -32,7 +33,7 @@ INGREDIENTS = {
     'broccoli': 'a green broccoli floret',
     'cheese': 'a wedge of yellow cheese with holes',
     'corn': 'a yellow ear of corn with green husks',
-    'chili': 'a red chili pepper',
+    'chili': 'a single long curved bright red chili pepper with a pointed tip and a small green stem, side view',
     'rice': 'a bowl of white rice',
     'meat': 'a red steak cut of meat',
     'lemon': 'a yellow lemon with a leaf',
@@ -90,6 +91,7 @@ if __name__ == '__main__':
         sys.exit(f'usage: sets.py <{"|".join(STYLES)}> [--all] [--only ingredients|dishes]')
     style = args[0]
     only = args[args.index('--only') + 1] if '--only' in args else ''
+    redo = set(args[args.index('--redo') + 1].split(',')) if '--redo' in args else set()
     subjects = {}
     if only in ('', 'ingredients'):
         subjects.update(INGREDIENTS)
@@ -97,7 +99,7 @@ if __name__ == '__main__':
         subjects.update(DISHES)
     tpl = STYLES[style]
     for key, s in subjects.items():
-        if key in SAMPLED and '--all' not in args:
+        if key in SAMPLED and '--all' not in args and key not in redo:
             continue
         prompt = tpl.replace('{S}', s[0].upper() + s[1:]).replace('{s}', s)
         print(json.dumps({'id': f'{style}-{key}', 'seed': 7, 'prompt': prompt}))

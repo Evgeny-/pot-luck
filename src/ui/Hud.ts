@@ -1,6 +1,8 @@
 import type { Tier } from '../core/types';
 import { emoji, h } from './dom';
 import { audio } from '../audio/audio';
+import { INGREDIENTS } from '../core/ingredients';
+import { ingredientHtml } from './iconStyle';
 
 export interface HudHandlers {
   home(): void;
@@ -12,9 +14,10 @@ export interface HudHandlers {
 
 /** Hard levels are one chili, super hard two; a new mechanic gets a NEW tag. */
 export function heatHtml(tier: Tier | undefined, size = 20): string {
-  if (tier === 'hard') return `<span class="heat">${emoji('hot-pepper', size)}</span>`;
-  if (tier === 'superhard') return `<span class="heat">${emoji('hot-pepper', size)}${emoji('hot-pepper', size)}</span>`;
-  return '';
+  const count = tier === 'superhard' ? 2 : tier === 'hard' ? 1 : 0;
+  if (!count) return '';
+  const chili = ingredientHtml(INGREDIENTS.find((i) => i.key === 'chili')!.id);
+  return `<span class="heat" aria-label="${count === 2 ? 'Extra spicy' : 'Spicy'}">${Array.from({ length: count }, () => `<span class="heat-icon" style="width:${size}px;height:${size}px">${chili}</span>`).join('')}</span>`;
 }
 
 export class Hud {
@@ -44,8 +47,8 @@ export class Hud {
       h('div', { class: 'hud-title' }, sign, h('div', { class: 'progress' }, this.fill), this.debugEl),
       right,
     );
-    const jar = (cls: string, icon: string, name: string, fn: () => void) => {
-      const b = h('button', { class: `jar-btn ${cls}`, html: `<span class="lid"></span><span class="glass">${emoji(icon, 30)}</span><span class="tag">${name}</span>`, attrs: { 'aria-label': name } });
+    const action = (cls: string, icon: string, name: string, fn: () => void) => {
+      const b = h('button', { class: `action-btn ${cls}`, html: `${emoji(icon, 26)}<span>${name}</span>`, attrs: { 'aria-label': name } });
       b.addEventListener('click', (e) => {
         e.stopPropagation();
         audio.unlock();
@@ -53,13 +56,13 @@ export class Hud {
       });
       return b;
     };
-    this.undoBtn = jar('b-undo', 'right-arrow-curving-left', 'Undo', on.undo);
-    const shelf = h('div', { class: 'shelf' },
+    this.undoBtn = action('b-undo', 'right-arrow-curving-left', 'Undo', on.undo);
+    const actions = h('div', { class: 'hud-actions', attrs: { 'aria-label': 'Kitchen actions' } },
       this.undoBtn,
-      jar('b-hint', 'light-bulb', 'Hint', on.hint),
-      jar('b-restart', 'counterclockwise-arrows-button', 'Restart', on.restart),
+      action('b-hint', 'light-bulb', 'Hint', on.hint),
+      action('b-restart', 'counterclockwise-arrows-button', 'Restart', on.restart),
     );
-    this.el = h('div', { class: 'hud' }, top, shelf);
+    this.el = h('div', { class: 'hud' }, top, actions);
     root.append(this.el);
   }
 

@@ -1,11 +1,12 @@
 import { CUISINES, LEVELS_PER_CUISINE, cuisineById, type CuisineId } from '../core/cuisines';
-import { DISHES } from '../core/ingredients';
+import { DISHES, INGREDIENTS } from '../core/ingredients';
 import type { LevelDef } from '../core/types';
 import { audio } from '../audio/audio';
 import { CLOCHE_SVG } from '../view/BoardView';
 import { button, emoji, h } from './dom';
 import { heatHtml } from './Hud';
-import { dishHtml } from './iconStyle';
+import { dishHtml, ingredientHtml } from './iconStyle';
+import { KNIFE_SVG } from './knife';
 import { FLAGS, GARLAND, SCENES, garland } from './scenery';
 import { applyTheme } from './themes';
 import './map.css';
@@ -236,8 +237,10 @@ function layout(inner: HTMLElement, W: number, d: MapData, shown: number, on: Ma
       if (room < size + 8) continue;
       const off = 20 + hash(n, i + 7) * Math.max(0, Math.min(room - size - 20, 130));
       const x = left ? road - 70 - off - size : road + 70 + off;
-      const el = h('div', { class: 'deco', html: emoji(c.deco[i % c.deco.length], size) });
-      Object.assign(el.style, { left: `${x}px`, top: `${y - size / 2}px`, transform: `rotate(${Math.round((hash(n, i + 3) - 0.5) * 36)}deg)` });
+      const icon = c.deco[i % c.deco.length];
+      const ingredient = INGREDIENTS.find((ing) => ing.icon === icon);
+      const el = h('div', { class: 'deco', html: ingredient ? ingredientHtml(ingredient.id) : emoji(icon) });
+      Object.assign(el.style, { left: `${x}px`, top: `${y - size / 2}px`, width: `${size}px`, height: `${size}px`, transform: `rotate(${Math.round((hash(n, i + 3) - 0.5) * 36)}deg)` });
       inner.append(el);
     }
 
@@ -309,7 +312,7 @@ function layout(inner: HTMLElement, W: number, d: MapData, shown: number, on: Ma
     if (stars) node.append(h('span', { class: 'nstars', html: [1, 2, 3].map((k) => emoji('star', 19, k <= stars ? '' : 'off')).join('') }));
     if (!locked && (lv.tier === 'hard' || lv.tier === 'superhard')) node.append(h('span', { html: heatHtml(lv.tier, 24) }).firstElementChild as HTMLElement);
     const newMech = lv.tier === 'intro' && n > 3 ? lv.mechanics?.[0] : undefined;
-    if (newMech && !locked) node.append(h('span', { class: 'newmech', html: emoji(MECH_ICON[newMech] ?? 'sparkles') }));
+    if (newMech && !locked) node.append(h('span', { class: 'newmech', html: newMech === 'knife' ? KNIFE_SVG : emoji(MECH_ICON[newMech] ?? 'sparkles') }));
     if (d.debug && lv.stats) node.append(h('span', { class: 'dbg', text: `d ${lv.stats.d.toFixed(2)}` }));
     node.addEventListener('click', () => {
       audio.unlock();

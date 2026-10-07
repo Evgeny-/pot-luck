@@ -6,8 +6,9 @@ import type { LevelDef } from '../core/types';
 import { Game } from '../game/Game';
 import { openDialog } from '../ui/dialogs';
 import { button, emoji, h, toast } from '../ui/dom';
-import { Hud } from '../ui/Hud';
+import { heatHtml, Hud } from '../ui/Hud';
 import { setArtSet } from '../ui/iconStyle';
+import { KNIFE_SVG } from '../ui/knife';
 import { MECH_ICON, showMap } from '../ui/MapScreen';
 import { countTo, openMarket } from '../ui/Market';
 import { applyTheme } from '../ui/themes';
@@ -30,11 +31,11 @@ const INTRO: Record<string, { title: string; text: string; icon: string }> = {
   links: { title: 'Tied together', icon: 'yarn', text: 'Ingredients tied with <b>twine</b> leave together: the one you tap goes first, then its partner, and only if both can go.' },
   lids: { title: 'Lids', icon: 'locked', text: 'A pot with a <b>lid</b> opens only after the pot pictured on the lid is served. Until then, anything sent its way goes to the bowl.' },
   cloche: { title: 'Under the cloche', icon: 'bellhop-bell', text: 'A silver <b>cloche</b> hides an ingredient. It lifts as soon as a tile next to it leaves the board.' },
-  jar: { title: 'The jar', icon: 'jar', text: 'This kitchen has a <b>jar</b> instead of a bowl. Ingredients stack up inside, and only the one <b>on top</b> (the last one in) can come out.' },
+  jar: { title: 'The jar', icon: 'jar', text: 'Early ingredients wait in this <b>jar</b>. The ingredient marked <b>Next</b> is the last one added. It leaves first when a recipe needs it.' },
   timer: { title: 'Kitchen timer', icon: 'timer-clock', text: 'This ingredient is still <b>marinating</b>. It unlocks after the number of ingredients shown on it has gone into the pots.' },
   queue: { title: 'Two dishes', icon: 'fork-and-knife-with-plate', text: 'Some pots cook <b>two dishes</b> in a row. When the first one is served, the next recipe starts.' },
   pads: { title: 'Turn pads', icon: 'clockwise-vertical-arrows', text: 'A tile that slides over a yellow <b>pad</b> turns to face the pad\'s arrow. Press and hold a tile to see its whole path.' },
-  knife: { title: 'Knife bar', icon: 'kitchen-knife', text: 'Anything that slides across the <b>knife</b> arrives chopped. Recipes mark chopped ingredients with a little knife.' },
+  knife: { title: 'The knife', icon: 'kitchen-knife', text: 'Slide an ingredient across the <b>silver blade</b> to chop it. A small knife on a recipe marks an ingredient that needs chopping.' },
 };
 
 export class App {
@@ -200,7 +201,7 @@ export class App {
       openDialog(this.ui, {
         title: info.title,
         head: 'teal',
-        body: [h('div', { class: 'mech-art', html: k === 'cloche' ? `<span style="width:84px;height:68px;display:block">${CLOCHE_SVG}</span>` : emoji(MECH_ICON[k] ?? info.icon, 78) }), info.text],
+        body: [h('div', { class: 'mech-art', html: k === 'cloche' ? `<span style="width:84px;height:68px;display:block">${CLOCHE_SVG}</span>` : k === 'knife' ? `<span class="knife-art">${KNIFE_SVG}</span>` : emoji(MECH_ICON[k] ?? info.icon, 78) }), info.text],
         buttons: [{ label: 'Got it', cls: 'green', onClick: () => {
           this.save.seen.push(k);
           writeSave(this.save);
@@ -214,7 +215,7 @@ export class App {
 
   private tierBanner(level: LevelDef): void {
     if (level.tier !== 'hard' && level.tier !== 'superhard') return;
-    const chilis = level.tier === 'hard' ? emoji('hot-pepper') : emoji('hot-pepper') + emoji('hot-pepper');
+    const chilis = heatHtml(level.tier, 34);
     const b = h('div', { class: `banner ${level.tier}`, html: `${chilis}${level.tier === 'hard' ? 'Spicy level' : 'Extra spicy!'}` });
     this.ui.append(b);
     setTimeout(() => b.remove(), 2200);

@@ -12,13 +12,15 @@ This is everything another agent needs to continue the icon art for Pot Luck. It
 
 **Done:**
 - Five sample ingredients in six candidate styles: tomato, carrot, mushroom, onion, cheese (30 images).
-- The four chosen styles are cut out and centred, then shipped in `public/art/<set>/<key>.webp` (20 icons).
-- The game shows them, and falls back to Fluent emoji for everything else.
+- Sticker now covers **all 32 ingredients**, including a new purple onion and curved red chili. The 27 missing ingredients and onion replacement were generated locally in one batch of 28.
+- Kawaii, Watercolor and Retro Diner each retain their five samples. All 47 shipped pictures are cut out and centred in `public/art/<set>/<key>.webp`.
+- Tiles, recipe tickets, map ingredient decorations and difficulty chilies use the equipped set, then Sticker, then Fluent emoji.
 - The Market, the tips economy and the per-set rendering switch work.
+- Board plates now use `dishHtml`, so dish artwork will appear as soon as it is available.
 
 **Not done:**
-- The full sets. Each set needs 59 icons (32 ingredients and 27 dishes); 54 of them are new. **Do the Sticker set first.**
-- Board plates still draw dishes with emoji (see "Wiring dish art" below).
+- **27 Sticker dish icons** remain. Get approval for this next batch.
+- The paid sets each need 54 more images to reach 59 icons. Generate them in the order the owner chooses.
 
 ## Ground rules from the owner
 
@@ -29,7 +31,7 @@ This is everything another agent needs to continue the icon art for Pot Luck. It
   ```
   If something is running there, wait. Don't kill another project's process.
 - Generated PNGs stay in `.cache/` (gitignored). Only the cut WebPs in `public/art/` and the manifest are committed.
-- Local commits are fine. Never push, add remotes or deploy.
+- The owner authorized public GitHub publishing and automatic deployment on 2026-10-07. See [DEPLOYMENT.md](DEPLOYMENT.md) for the current setup.
 - Commit messages are one plain sentence about what the player sees, ending with the `Co-Authored-By` line the session uses.
 - Don't modify `~/Projects/ants` or `~/Projects/water-sort`; copying from them is fine.
 
@@ -44,7 +46,7 @@ This is everything another agent needs to continue the icon art for Pot Luck. It
 - **Settings:**
   - 640×640 and 8 steps (the defaults; positional args 3–5 override width, height and steps);
   - seed 7 for everything so far.
-- **Speed on this Mac:** about 45–150 s per image depending on load, so 27 images take 30–60 minutes.
+- **Speed on this Mac:** the completed 28-image batch took about 25 minutes, with individual images taking 40–90 s. Load can increase that time.
 
 Run (installs mflux into a throwaway uv env, nothing to set up):
 
@@ -81,9 +83,11 @@ Build a queue:
 python3 scripts/art/sets.py sticker --only ingredients > .cache/art/sets.jsonl   # 27 jobs
 python3 scripts/art/sets.py sticker --only dishes >> .cache/art/sets.jsonl       # 27 more (next batch)
 python3 scripts/art/sets.py sticker --all ...                                    # also redo the 5 samples
+python3 scripts/art/sets.py sticker --only ingredients --redo onion             # the completed 28-job prompt set
 ```
 
 The ids are `<set>-<key>`, which is what the cut step and the game expect. The five sample keys are skipped by default because they already exist in `.cache/art/styles/`.
+`--redo key1,key2` includes specific sample keys in the queue; it does not delete cached PNGs.
 
 **Redoing one bad picture:** delete `.cache/art/sets/<id>.png`, change that line's `seed` in the queue (e.g. 7 → 11) or tweak its subject, and run the generator again; it only renders missing files.
 
@@ -91,6 +95,8 @@ The ids are `<set>-<key>`, which is what the cut step and the game expect. The f
 
 ```bash
 python3 scripts/art/cut.py      # needs numpy + pillow; otherwise: uv run --no-project --with pillow --with numpy python scripts/art/cut.py
+python3 scripts/art/cut.py --changed  # cut only new/changed sources; keep the manifest unchanged when its contents match
+python3 scripts/art/contact-sheet.py sticker  # → .cache/art/sticker-ingredients-contact.png
 ```
 
 `scripts/art/cut.py` reads `.cache/art/styles/*.png` and then `.cache/art/sets/*.png` (later wins) for the sets sticker, kawaii, watercolor and retro. For each picture it does five things:
@@ -132,6 +138,7 @@ sheet.convert('RGB').save('/tmp/sheet.jpg', quality=85)
 **Tests:** `npx vitest run`.
 - `tests/economy.test.ts` checks that every manifest key is a real ingredient or dish and that its file exists. It also checks that every paid set has its 5 preview pictures (tomato, carrot, mushroom, onion, cheese).
 - Run `npx tsc --noEmit -p .` too.
+- The manifest test requires every ingredient to exist in the free Sticker set.
 
 **Known looks:**
 - Watercolor keeps a soft grey ground wash under objects; it's part of the style.
@@ -148,11 +155,9 @@ sheet.convert('RGB').save('/tmp/sheet.jpg', quality=85)
 - **`src/ui/Market.ts`** is the store UI, opened from the map's Market button or its tips pill. **`src/app/save.ts`** stores `tips`, `owned` and `artSet`.
 - **Map plates** (`src/ui/MapScreen.ts`) already use `dishHtml`, so dish art appears there automatically.
 
-### Wiring dish art on the board (small TODO once dishes exist)
+### Board destinations
 
-`src/view/BoardView.ts` still draws pot plates and dish separators with `emoji(...)`, around the `renderPots` method:
-1. Switch the plate (`pp.plate.innerHTML = emoji(info.icon)`) and the `dish-sep` span to `dishHtml(kind)`.
-2. Change the redraw guard `pp.icon !== info.icon` to compare the dish kind or the returned HTML. Otherwise switching sets won't redraw.
+`src/view/BoardView.ts` draws plates with `dishHtml` and compares the returned HTML when deciding whether to redraw. Food targets the required ingredient's recipe icon using its dish and item indices. Each recipe tick appears after the food lands. Tickets show the current recipe; the next dish's ingredients appear after it is complete. Jar storage still follows last-in, first-out order.
 
 ## After generating a set
 
