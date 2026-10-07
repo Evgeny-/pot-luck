@@ -2,7 +2,7 @@ import { CUISINES, LEVELS_PER_CUISINE, cuisineById, type CuisineId } from '../co
 import { DISHES, INGREDIENTS } from '../core/ingredients';
 import type { LevelDef } from '../core/types';
 import { audio } from '../audio/audio';
-import { CLOCHE_SVG } from '../view/BoardView';
+import { CLOCHE_SVG } from './cloche';
 import { button, emoji, h } from './dom';
 import { heatHtml } from './Hud';
 import { dishHtml, ingredientHtml } from './iconStyle';
@@ -308,7 +308,10 @@ function layout(inner: HTMLElement, W: number, d: MapData, shown: number, on: Ma
       );
     } else if (stars || (d.debug && !locked)) {
       node.append(h('span', { class: 'dish', html: dishHtml(kind) }), h('span', { class: 'num', text: String(n) }));
-    } else node.append(h('span', { class: 'num', text: String(n) }));
+    } else {
+      if (locked) node.append(h('span', { class: 'map-cover', html: CLOCHE_SVG }));
+      node.append(h('span', { class: 'num', text: String(n) }));
+    }
     if (stars) node.append(h('span', { class: 'nstars', html: [1, 2, 3].map((k) => emoji('star', 19, k <= stars ? '' : 'off')).join('') }));
     if (!locked && (lv.tier === 'hard' || lv.tier === 'superhard')) node.append(h('span', { html: heatHtml(lv.tier, 24) }).firstElementChild as HTMLElement);
     const newMech = lv.tier === 'intro' && n > 3 ? lv.mechanics?.[0] : undefined;

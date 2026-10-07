@@ -53,37 +53,40 @@ INGREDIENTS = {
     'blueberry': 'a handful of blueberries',
 }
 
+# Dishes sit inside the game's own plate. Keep containers small and filled so the food reads
+# at icon size; broad empty plates and long pan handles would shrink the portion after centring.
 DISHES = {
-    'soup': 'a pot of vegetable soup',
-    'stew': 'a shallow pan of hearty stew',
-    'curry': 'a plate of curry with rice',
-    'salad': 'a bowl of green salad',
-    'pasta': 'a plate of spaghetti with tomato sauce',
-    'ramen': 'a steaming bowl of ramen with noodles and egg',
-    'omelette': 'a folded omelette in a frying pan',
-    'sandwich': 'a sandwich with lettuce, tomato and cheese',
-    'pizza': 'a slice of pizza with melted cheese',
-    'taco': 'a taco with meat and salsa',
-    'dumplings': 'three steamed dumplings',
-    'burrito': 'a wrapped burrito cut in half',
-    'sushi': 'a sushi roll and nigiri',
-    'bento': 'a bento box with rice and sides',
-    'onigiri': 'a rice ball onigiri with seaweed',
-    'oden': 'an oden skewer with fish cakes',
-    'tamale': 'a tamale in a corn husk',
-    'burger': 'a hamburger with cheese and lettuce',
-    'fries': 'a red carton of french fries',
-    'hotdog': 'a hot dog with mustard',
-    'pancakes': 'a stack of pancakes with syrup and butter',
-    'flatbread': 'a round flatbread naan',
-    'takeout': 'a takeout box of noodles with chopsticks',
-    'hotpot': 'a red hot pot with chilies and vegetables',
-    'mooncake': 'a golden mooncake with a pattern',
-    'fortune': 'a fortune cookie',
-    'kebab': 'a stuffed flatbread wrap',
+    'soup': 'a small deep red bowl filled to the brim with golden vegetable soup and visible carrot and tomato chunks, compact three-quarter view',
+    'stew': 'a small brown ceramic bowl filled to the brim with rich beef stew, chunky meat, orange carrots and potatoes, compact three-quarter view',
+    'curry': 'a compact serving of golden curry and white rice filling a small shallow white bowl with a narrow rim, three-quarter view',
+    'salad': 'a small blue bowl packed with crisp green lettuce leaves and red tomato wedges, compact three-quarter view',
+    'pasta': 'a compact mound of golden spaghetti with thick red tomato sauce and one basil leaf, filling a small shallow white bowl with a narrow rim, three-quarter view',
+    'ramen': 'a small dark blue bowl filled to the brim with ramen noodles, a halved egg and green scallions, compact three-quarter view',
+    'omelette': 'a single plump golden folded omelette with a few tiny green herb flecks, compact three-quarter view',
+    'sandwich': 'a single thick triangular sandwich with lettuce, red tomato and yellow cheese visible between two slices of bread, compact three-quarter view',
+    'pizza': 'a single triangular slice of pizza with melted yellow cheese, red pepperoni and a golden crust, compact three-quarter view',
+    'taco': 'a single golden taco shell stuffed with meat, green lettuce and red salsa, compact three-quarter view',
+    'dumplings': 'three plump white steamed dumplings nestled closely together, folded tops clearly visible, compact three-quarter view',
+    'burrito': 'a single short burrito cut in half with beans, rice and red tomato visible inside, the two halves nestled together, compact three-quarter view',
+    'sushi': 'one salmon nigiri beside one thick sushi roll with green cucumber filling, nestled closely together, compact three-quarter view',
+    'bento': 'a small square red bento box filled edge to edge with white rice, salmon, a yellow egg roll and green vegetables, compact three-quarter view',
+    'onigiri': 'a single plump triangular white onigiri rice ball with a dark seaweed band at its base, compact three-quarter view',
+    'oden': 'a short diagonal oden skewer holding a pale daikon round, a golden fish cake and a white triangular fish cake, compact three-quarter view',
+    'tamale': 'a single short Mexican tamale made of smooth pale golden masa dough, shaped like a plump rectangular parcel with red filling visible at one cut end, cradled in an opened tan dried corn husk, compact three-quarter view',
+    'burger': 'a single tall hamburger with a golden sesame bun, red tomato, yellow cheese and green lettuce, compact three-quarter view',
+    'fries': 'a small red carton densely packed with crisp golden french fries, compact three-quarter view',
+    'hotdog': 'a single plump red sausage in a golden hot dog bun with a yellow mustard zigzag, compact three-quarter view',
+    'pancakes': 'a small compact stack of three golden pancakes with brown syrup and a square of butter on top, three-quarter view',
+    'flatbread': 'a single oval golden naan flatbread with toasted brown spots and a few tiny green herb flecks, compact three-quarter view',
+    'takeout': 'a small red and white open takeout carton filled to the brim with curling golden noodles and green vegetables, compact three-quarter view',
+    'hotpot': 'a small red cooking pot filled to the brim with spicy red broth, green vegetables and red chili peppers, two short side handles, compact three-quarter view',
+    'mooncake': 'a single round golden mooncake with a scalloped edge and a simple flower pattern pressed into its top, compact three-quarter view',
+    'fortune': 'a single golden folded fortune cookie with a tiny plain white paper slip, compact three-quarter view',
+    'kebab': 'a single short stuffed flatbread wrap with grilled meat, green lettuce and red tomato visible at its open top, compact three-quarter view',
 }
 
 SAMPLED = {'tomato', 'carrot', 'mushroom', 'onion', 'cheese'}
+SEEDS = {('sticker', 'tamale'): 11}
 
 if __name__ == '__main__':
     args = sys.argv[1:]
@@ -102,4 +105,4 @@ if __name__ == '__main__':
         if key in SAMPLED and '--all' not in args and key not in redo:
             continue
         prompt = tpl.replace('{S}', s[0].upper() + s[1:]).replace('{s}', s)
-        print(json.dumps({'id': f'{style}-{key}', 'seed': 7, 'prompt': prompt}))
+        print(json.dumps({'id': f'{style}-{key}', 'seed': SEEDS.get((style, key), 7), 'prompt': prompt}))

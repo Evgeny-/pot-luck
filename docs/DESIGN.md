@@ -23,8 +23,8 @@ version's reasoning and data are still in [PLAN.md](PLAN.md) and [EXPERIMENTS.md
 | "A hidden ingredient until you reveal its neighbours; one you can't use until N ingredients are added; linked ingredients like in Pixel Picnic." | Three new mechanics: **cloches** (hidden until a neighbouring tile leaves), **kitchen timers** (unlock after N deliveries), **tied pairs** (leave together, the tapped one first). They are measured in EXPERIMENTS.md (round 2): all add depth, and tied pairs add the most. |
 | "The kebab at the bottom of level 50 is confusing." | The skewer is now a **glass jar**: ingredients stack up inside, and only the one on top comes out. Same rule (last in, first out), but the picture explains it. |
 | "Dishes look squished, aligned differently." | Every pot is an **order ticket with a round plate**. All dish icons sit at the same size in the same plate, on every edge. |
-| "Ugly jumping animations when an ingredient is added." | Pots no longer jump. A tile slides out, hops into the plate and shrinks. The plate squashes a little, a few drops splash, and the recipe chip gets a drawn tick. A served dish gets steam, a sparkle and a red SERVED stamp. Blocked tiles nudge toward where they wanted to go. |
-| "Sounds are from Pixel Picnic." | New synthesized kitchen sounds: a wooden knock, a swish, a liquid plop, a ceramic clink, a service bell, a lid clank, a cloche "shing", a kitchen-timer ding and a twine twang. There is generative music per cuisine. |
+| "Ugly jumping animations when an ingredient is added." | Food flies to the required ingredient chip, which gets its tick after landing. A finished plate settles at the center of its ticket's row or column and receives a small green check. Blocked tiles nudge toward where they wanted to go. |
+| "Sounds are from Pixel Picnic." | Synthesized kitchen sounds accompany written melodies for each cuisine. The arrangements have responses, quieter bridges and a return, with pauses at the end of phrases. |
 | "The style looks like Pixel Picnic." | A new identity, shown in full below. Icon styles are compared in `_review/style/index.html`. |
 | "The map should open step by step, but in its own way." | A **world food tour**: one region per cuisine, with its pattern and a hanging sign. Levels are plates along a dashed route. Finished plates show their dish and stars. Upcoming ones wait under a cloche. Hard levels carry one chili, super hard two. A little chef marks where you are. |
 
@@ -179,20 +179,19 @@ The goal was a look of its own, so that Pot Luck and Pixel Picnic feel like sibl
   badge.
 - **Pots:** order tickets with a plate. Food lands on the required recipe ingredient, then its tick appears. Mobile recipe icons are larger. Each ticket shows one recipe; the next appears when the current dish is complete.
 - **Board:** warm wood for each cuisine, with curved grain, faint knots and a routed groove around the rim.
-- **Storage:** a ceramic bowl or a glass jar with a red cap. The jar has a wider neck, soft glass highlights and a badge on the next ingredient, preserving the last-in, first-out rule.
+- **Storage:** a ceramic bowl with an oval opening and centered spaces, or a glass jar with a red cap. The jar has a wider neck, soft glass highlights and a badge on the next ingredient, preserving the last-in, first-out rule. A counter shows total uses and the three-star allowance; tap it for all star ranges.
 - **Actions:** enamel buttons with readable Undo, Hint and Restart labels, beneath the board on phones and beside it on wide screens.
-- **Finished dishes:** a small green check at the plate's edge leaves the dish picture visible.
+- **Finished dishes:** a small green check at the plate's edge leaves the dish picture visible. Each plate centers along the edge when its ingredient strip disappears.
 - **Dialogs:** recipe cards with a ruled paper texture, a red margin line and a tape-like title.
 - **Backgrounds** change per cuisine: red gingham, indigo waves, talavera tiles, diner checks,
   block-print rosettes and a lattice. The board's wood changes with them.
-- **Map:** the world food tour described above. Restaurant signs sit without hanging rope stubs; ingredient props use the equipped art set.
-- **Sound:** synthesized kitchen sounds and generative music per cuisine (Italian mandolin
-  tremolo, koto on a Japanese scale, marimba, a diner jukebox, a tanpura drone with sitar plucks,
-  guzheng glissandi).
+- **Map:** the world food tour described above. Restaurant signs sit without hanging rope stubs; ingredient props use the equipped art set. Rounded silver serving covers have a rim and handle, shared with covered ingredients.
+- **Sound:** synthesized kitchen sounds with an arrangement for each cuisine. Italy uses mandolin
+  and accordion; Japan alternates koto and flute. The longer phrases and quieter bridges are
+  described in [AUDIO.md](AUDIO.md).
 
-**Icon styles.** Sticker is the free default and covers all 32 ingredients. Kawaii, Watercolor and
-Retro Diner are paid sets with five samples each; missing pictures fall back to Sticker. Dishes
-currently use Fluent emoji until their art batch is generated. `_review/style/index.html` retains
+**Icon styles.** Sticker is the free default and covers all 32 ingredients and 27 dishes. Kawaii, Watercolor and
+Retro Diner are paid sets with five samples each; missing pictures fall back to Sticker. `_review/style/index.html` retains
 the original style comparison. Use `?icons=sticker`, `kawaii`, `watercolor` or `retro` to preview an
 equipped set. Local generation commands and remaining work are in [ART-HANDOFF.md](ART-HANDOFF.md).
 
@@ -200,13 +199,13 @@ equipped set. Local generation commands and remaining work are in [ART-HANDOFF.m
 
 ## Open questions
 
-1. **Dish art.** The next Sticker batch is the 27 dishes. The paid sets each need 54 more pictures.
+1. **Paid art sets.** Each paid set needs 54 more pictures to match Sticker's coverage.
 2. **Is the curve right?** Normal levels are now noticeably harder. The first chapter should be
    playtested for frustration, especially levels 4–7 with a single bowl spot.
 3. **Router or hold bowl** (from v1): arrows can still "lie" (a tile pointing at a pot that doesn't
    need it). Worth a playtest.
 4. **Stars:** par-based stars are demanding on gridlock levels.
-5. **Music:** each cuisine has its own loop. Is it too much? There is a toggle in Settings.
+5. **Music:** playtest the longer arrangements. There is a toggle in Settings.
 
 ## Not done yet
 

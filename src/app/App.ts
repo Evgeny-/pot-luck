@@ -4,6 +4,7 @@ import { cuisineById, type CuisineId } from '../core/cuisines';
 import { MECHANIC_LEVEL, type MechanicId } from '../core/progression';
 import type { LevelDef } from '../core/types';
 import { Game } from '../game/Game';
+import { CLOCHE_SVG } from '../ui/cloche';
 import { openDialog } from '../ui/dialogs';
 import { button, emoji, h, toast } from '../ui/dom';
 import { heatHtml, Hud } from '../ui/Hud';
@@ -12,8 +13,8 @@ import { KNIFE_SVG } from '../ui/knife';
 import { MECH_ICON, showMap } from '../ui/MapScreen';
 import { countTo, openMarket } from '../ui/Market';
 import { applyTheme } from '../ui/themes';
+import { storageInfo } from '../ui/storageInfo';
 import { watchFrame } from '../ui/viewport';
-import { CLOCHE_SVG } from '../view/BoardView';
 import { buy, equip, tipsForWin } from './economy';
 import { loadSave, resetSave, writeSave, type SaveData } from './save';
 
@@ -24,14 +25,14 @@ const tierOf = (n: number) => LEVELS[n - 1]?.tier;
 const INTRO: Record<string, { title: string; text: string; icon: string }> = {
   start: { title: 'Let\'s cook!', icon: 'pot-of-food', text: 'Tap a tile: it slides off the board the way its arrow points, if nothing is in its way, and lands in the pot on that side. Pots want their ingredients <b>in recipe order</b>. Press and hold a tile to see where it will go.' },
   two: { title: 'Two pots', icon: 'curry-rice', text: 'Every side of the board feeds its own pot: up goes to the top pot, down to the bottom one.' },
-  bowl: { title: 'The side bowl', icon: 'bowl-with-spoon', text: 'Tap an ingredient a pot doesn\'t want yet and it waits in the <b>bowl</b>. The pot takes it the moment it\'s needed. The bowl has just <b>one spot</b>, so park only what you must. Fewer bowl uses earn more stars.' },
+  bowl: { title: 'The side bowl', icon: 'bowl-with-spoon', text: 'Tap an ingredient a pot doesn\'t want yet and it waits in the <b>bowl</b>. The pot takes it the moment it\'s needed. The bowl has just <b>one spot</b>, so park only what you must. Tap the usage count beside it to see the star goals for this level.' },
   salad: { title: 'Salad bowl', icon: 'green-salad', text: 'The salad isn\'t fussy: it takes its ingredients <b>in any order</b>.' },
   bowl2: { title: 'A bigger bowl', icon: 'bowl-with-spoon', text: 'Your bowl now has <b>two spots</b>. Some kitchens will still give you only one.' },
   stacks: { title: 'Stacked tiles', icon: 'pancakes', text: 'Some tiles hide another one <b>underneath</b>. The little badge shows it and its arrow. The spot stays taken until both have left.' },
   links: { title: 'Tied together', icon: 'yarn', text: 'Ingredients tied with <b>twine</b> leave together: the one you tap goes first, then its partner, and only if both can go.' },
   lids: { title: 'Lids', icon: 'locked', text: 'A pot with a <b>lid</b> opens only after the pot pictured on the lid is served. Until then, anything sent its way goes to the bowl.' },
   cloche: { title: 'Under the cloche', icon: 'bellhop-bell', text: 'A silver <b>cloche</b> hides an ingredient. It lifts as soon as a tile next to it leaves the board.' },
-  jar: { title: 'The jar', icon: 'jar', text: 'Early ingredients wait in this <b>jar</b>. The ingredient marked <b>Next</b> is the last one added. It leaves first when a recipe needs it.' },
+  jar: { title: 'The jar', icon: 'jar', text: 'Early ingredients wait in this <b>jar</b>. The ingredient marked <b>Next</b> is the last one added. It leaves first when a recipe needs it. Tap the usage count to see the star goals.' },
   timer: { title: 'Kitchen timer', icon: 'timer-clock', text: 'This ingredient is still <b>marinating</b>. It unlocks after the number of ingredients shown on it has gone into the pots.' },
   queue: { title: 'Two dishes', icon: 'fork-and-knife-with-plate', text: 'Some pots cook <b>two dishes</b> in a row. When the first one is served, the next recipe starts.' },
   pads: { title: 'Turn pads', icon: 'clockwise-vertical-arrows', text: 'A tile that slides over a yellow <b>pad</b> turns to face the pad\'s arrow. Press and hold a tile to see its whole path.' },
@@ -163,6 +164,7 @@ export class App {
       stuck: () => this.stuck(),
       changed: () => this.refresh(),
       say: (t) => toast(this.ui, t),
+      bowlInfo: (uses) => storageInfo(this.ui, level, uses),
     });
     this.hud = new Hud(this.ui, n, level.tier ?? 'normal', `${cuisine.name.en} · ${cuisine.place.en}`, {
       home: () => {

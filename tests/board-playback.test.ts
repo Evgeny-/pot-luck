@@ -58,9 +58,11 @@ describe('board deliveries follow the visible food', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(sim.bowlLen).toBe(1);
     expect(view.shown.bowlLen).toBe(0);
+    expect(view.shown.parks).toBe(0);
     finishes[0]();
     await vi.advanceTimersByTimeAsync(0);
     expect(view.shown.bowlTok[0]).toBe(tokenOf(T));
+    expect(view.shown.parks).toBe(1);
     await vi.advanceTimersByTimeAsync(120);
     await done;
   });
@@ -135,6 +137,52 @@ describe('board deliveries follow the visible food', () => {
     expect(view.shown.bowlLen).toBe(0);
     expect(view.shown.present).toEqual(before.present);
     expect(view.shown.wants(0)).toEqual([tokenOf(O)]);
+  });
+});
+
+describe('completed tickets settle in the original row or column', () => {
+  it.each([0, 1, 2, 3] as const)('centres side %i after the recipe disappears, including after a shifted dish', (side) => {
+    const level = workedExample();
+    level.pots = [{ ...level.pots[0], side }];
+    const sim = Sim.fromLevel(level);
+    const classes = new Set<string>();
+    const style = { left: '200px', top: '200px' };
+    const flat = side === 0 || side === 2;
+    const pot = {
+      style,
+      classList: { contains: (name: string) => classes.has(name), toggle: (name: string, on: boolean) => on ? classes.add(name) : classes.delete(name) },
+      getBoundingClientRect: () => {
+        const done = classes.has('done');
+        const width = done || !flat ? 56 : 180;
+        const height = done || flat ? 56 : 180;
+        return {
+          left: parseFloat(style.left) - (flat ? width / 2 : side === 3 ? width : 0),
+          top: parseFloat(style.top) - (side === 0 ? height : flat ? 0 : height / 2), width, height,
+        };
+      },
+    };
+    const plate = {
+      innerHTML: '', title: '',
+      getBoundingClientRect: () => { const rect = pot.getBoundingClientRect(); return { left: rect.left + 8, top: rect.top + 8, width: 40, height: 40 }; },
+    };
+    const view = Object.assign(Object.create(BoardView.prototype), {
+      level, fresh: new Set(), recipeGaps: [7], ticketOrigins: [[200, 200]], potEls: [pot],
+      potParts: [{ plate, strip: { dataset: {}, innerHTML: '' }, extra: { dataset: {}, innerHTML: '' }, icon: '' }],
+      root: { clientWidth: 800, clientHeight: 600, getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) },
+    }) as { renderPots(sim: Sim): void; centerOf(el: unknown): [number, number] };
+    view.renderPots(sim);
+    // Recipe promotion can preserve the plate by shifting the surrounding ticket.
+    style.left = '217px'; style.top = '219px';
+    sim.potDish[0] = level.pots[0].dishes.length;
+    view.renderPots(sim);
+    const axis = flat ? 0 : 1;
+    expect(view.centerOf(plate)[axis]).toBe(200);
+    view.renderPots(sim);
+    expect(view.centerOf(plate)[axis]).toBe(200);
+    // Undo returns the entire recipe to its intended position before cooking resumes.
+    sim.potDish[0] = 0;
+    view.renderPots(sim);
+    expect(parseFloat(flat ? style.left : style.top)).toBe(200);
   });
 });
 

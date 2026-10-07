@@ -11,7 +11,7 @@ progress stays in your browser.
 
 <p>
   <img src="docs/screenshots/desktop-kitchen.jpg" width="620" alt="Pot Luck on desktop: ingredient stickers on a wooden board, recipe tickets and a knife that chops ingredients crossing its blade">
-  <img src="docs/screenshots/mobile-kitchen.jpg" width="230" alt="Pot Luck on a phone: recipes around the board, a glass storage jar and Undo, Hint and Restart controls">
+  <img src="docs/screenshots/mobile-kitchen.jpg" width="230" alt="Pot Luck on a phone: matching dish and ingredient stickers, a ceramic bowl and its star allowance">
 </p>
 
 ## How to play
@@ -24,6 +24,9 @@ progress stays in your browser.
 Use the bowl sparingly to earn more stars. Later kitchens hide ingredients under cloches and tie
 pairs of tiles together. Turn pads redirect food. Sliding across a knife chops an ingredient for
 recipes that need it.
+
+The counter beneath the bowl or jar shows how many ingredients you have parked. Tap it to see
+the star goals for that level. Undo restores the count.
 
 ## Run locally
 
@@ -43,7 +46,7 @@ npm run build  # TypeScript checks and the production build
 
 The game uses TypeScript and Vite. Its rules and solver live in `src/core/`; `BoardView` animates
 the simulation's events. Artwork is generated locally with Z-Image Turbo through mflux.
-All 32 ingredients have icons in the free Sticker set.
+The free Sticker set has matching art for all 32 ingredients and 27 dishes.
 
 Useful URL flags:
 
@@ -66,9 +69,10 @@ bun scripts/experiment.ts
 ```
 
 Read [the design notes](docs/DESIGN.md) for the campaign and mechanics.
-[The art handoff](docs/ART-HANDOFF.md) covers prompts and the local generation pipeline, including
-the remaining dish art. [Experiments](docs/EXPERIMENTS.md) document how the rules affect puzzle depth.
+[The art handoff](docs/ART-HANDOFF.md) covers prompts and the local generation pipeline.
+[Experiments](docs/EXPERIMENTS.md) document how the rules affect puzzle depth.
 [Deployment](docs/DEPLOYMENT.md) explains the publishing workflow.
 
 Asset credits and licence notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-Sound is synthesized with the Web Audio API.
+Sound is synthesized with the Web Audio API. [The soundtrack notes](docs/AUDIO.md) describe the
+arrangements and explain how to render a listening preview.
