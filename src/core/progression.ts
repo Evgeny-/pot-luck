@@ -29,36 +29,53 @@ export function tierFor(n: number): Tier {
   return 'normal';
 }
 
-/** Win-rate bands of the simulated players for a level (see solver.ts). */
+/**
+ * What a level should measure: a difficulty `d` (0..1, see tune.ts) on the campaign curve, plus
+ * guard bands that keep each tier honest (intro and relax levels stay gentle, normal ones fair).
+ */
 export interface Target {
+  d: number;
+  tol: number;
   greedy: [number, number];
   planner: [number, number];
-  casual?: [number, number];
-  random?: [number, number];
+  /** Decisions on the solution where another move loses: every level should ask for some. */
   minCritical: number;
 }
 
-export function targetFor(tier: Tier, n: number): Target {
-  // 0 at the start of the campaign, 1 from level 60 on.
-  const stage = Math.min(1, Math.max(0, (n - 4) / 56));
+/**
+ * The difficulty curve: a slowly rising base with a sawtooth on top. Inside a block of ten the
+ * normal levels wiggle up, the 5th is a hard peak, the 6th a breather, the 10th the big peak.
+ */
+export function targetD(n: number, tier: Tier): number {
+  const base = 0.2 + 0.18 * Math.min(1, (n - 1) / 60);
+  const pos = (n - 1) % 10;
   switch (tier) {
     case 'intro':
-      return { greedy: [0.85, 1], planner: [0.95, 1], casual: [0.25, 1], minCritical: 0 };
+      return Math.min(0.1, base * 0.5);
     case 'relax':
-      return { greedy: [0.8, 1], planner: [0.9, 1], casual: [0.1, 1], minCritical: 0 };
-    case 'normal':
-      return {
-        greedy: [0.55 - 0.15 * stage, 0.9 - 0.15 * stage],
-        planner: [0.75 - 0.1 * stage, 1],
-        casual: [0, 0.5 - 0.25 * stage],
-        minCritical: 1 + Math.round(stage * 2),
-      };
+      return Math.max(0.06, base - 0.12);
     case 'hard':
-      return { greedy: [0.2, 0.55 - 0.1 * stage], planner: [0.45 - 0.1 * stage, 0.85], casual: [0, 0.15], minCritical: 3 + Math.round(stage * 2) };
+      return base + 0.22;
     case 'superhard':
-      return { greedy: [0, 0.3 - 0.1 * stage], planner: [0.15, 0.65 - 0.1 * stage], casual: [0, 0.08], minCritical: 5 + Math.round(stage * 2) };
+      return Math.min(0.85, base + 0.34);
     default:
-      return { greedy: [0, 1], planner: [0, 1], minCritical: 0 };
+      return base + [0, 0, -0.04, 0, 0.04, 0, 0, -0.02, 0.02, 0.05][pos];
+  }
+}
+
+export function targetFor(tier: Tier, n: number): Target {
+  const d = targetD(n, tier);
+  switch (tier) {
+    case 'intro':
+      return { d, tol: 0.1, greedy: [0.8, 1], planner: [0.95, 1], minCritical: 0 };
+    case 'relax':
+      return { d, tol: 0.07, greedy: [0.75, 1], planner: [0.9, 1], minCritical: 0 };
+    case 'hard':
+      return { d, tol: 0.06, greedy: [0, 0.65], planner: [0.3, 0.92], minCritical: 3 + (n > 30 ? 1 : 0) };
+    case 'superhard':
+      return { d, tol: 0.07, greedy: [0, 0.4], planner: [0.1, 0.8], minCritical: 5 + (n > 30 ? 1 : 0) };
+    default:
+      return { d, tol: 0.04, greedy: [0.3, 1], planner: [0.6, 1], minCritical: n > 6 ? 1 : 0 };
   }
 }
 
@@ -135,7 +152,7 @@ export function planLevel(n: number): LevelPlan {
     ingredients = n < 20 ? 6 : 7;
     // Some levels use fewer pots (walls on the other edges): a different kind of board.
     const roll = rng.next();
-    if (tier === 'normal' && roll < 0.2) {
+    if (tier === 'normal' && roll < 0.2 && n % 3 !== 0) {
       sides = [0, 2];
       shape = 'up and down';
     } else if (tier === 'normal' && roll < 0.35) {
@@ -164,7 +181,25 @@ export function planLevel(n: number): LevelPlan {
     rules.bowl = 3;
     shape = 'new: ' + intro;
   };
-  const want = (m: MechanicId, chance: number) => intro === m || (has(m) && !intro && rng.chance(chance));
+  // Which twists this level mixes in: the newest one gets practised right after its intro, and
+  // harder tiers may combine more of them.
+  const TWISTS: MechanicId[] = ['stacks', 'lids', 'queue', 'skewer', 'pads', 'knife', 'frozen'];
+  const CHANCE: Record<string, number> = { stacks: 0.4, lids: 0.35, queue: 0.25, skewer: 0.35, pads: 0.3, knife: 0.2, frozen: 0.3 };
+  const cap = tier === 'superhard' ? 3 : tier === 'hard' || tier === 'normal' ? 2 : tier === 'relax' ? 1 : 0;
+  const pick = new Set<MechanicId>();
+  if (intro) pick.add(intro);
+  else {
+    const avail = TWISTS.filter((m) => n > MECHANIC_LEVEL[m]);
+    const recent = avail.filter((m) => n - MECHANIC_LEVEL[m] <= 4);
+    for (const m of recent) if (pick.size < cap && rng.chance(0.8)) pick.add(m);
+    for (const m of rng.shuffle(avail.filter((x) => !recent.includes(x)))) {
+      // Skewers and lids are the hard twists: no lids or skewers on relax levels.
+      if (tier === 'relax' && (m === 'lids' || m === 'skewer')) continue;
+      if (pick.size < cap && rng.chance(CHANCE[m] * (tier === 'hard' || tier === 'superhard' ? 1.5 : 1))) pick.add(m);
+    }
+    if (pick.has('knife')) for (const m of ['stacks', 'lids', 'queue'] as MechanicId[]) pick.delete(m);
+  }
+  const want = (m: MechanicId) => pick.has(m);
 
   if (intro && intro !== 'bowl' && intro !== 'salad') introBoard();
 
@@ -177,12 +212,12 @@ export function planLevel(n: number): LevelPlan {
   }
 
   // Any-order salad: relief levels, and a different kind of pot here and there.
-  if (intro === 'salad' || (has('salad') && pots.length >= 3 && rng.chance(tier === 'relax' ? 0.8 : tier === 'normal' ? 0.25 : 0))) {
+  if (intro === 'salad' || (!intro && has('salad') && pots.length >= 3 && pick.size < 2 && rng.chance(tier === 'relax' ? 0.8 : tier === 'normal' ? 0.2 : 0))) {
     const left = pots.find((q) => q.side === 3) ?? pots[pots.length - 1];
     left.dishes = left.dishes.map((d) => ({ ...d, order: 'any', kind: 'salad' } as DishSpec));
     used.push('salad');
   }
-  if (want('stacks', tier === 'hard' || tier === 'superhard' ? 0.6 : 0.35)) {
+  if (want('stacks')) {
     p.stacks = intro === 'stacks' ? 4 : rng.int(3, 6);
     // Stacks put more ingredients on the same cells.
     const extra = p.stacks;
@@ -190,12 +225,12 @@ export function planLevel(n: number): LevelPlan {
     pots[pots.length - 1].dishes[0].len += Math.floor(extra / 2);
     used.push('stacks');
   }
-  if (want('lids', tier === 'normal' ? 0.25 : tier === 'relax' ? 0 : 0.5) && pots.length >= 2) {
+  if (want('lids') && pots.length >= 2) {
     const k = rng.int(0, pots.length - 1);
     pots[k].lid = (k + 1 + rng.int(0, pots.length - 2)) % pots.length;
     used.push('lids');
   }
-  if (want('queue', 0.3) && tier !== 'superhard') {
+  if (want('queue')) {
     // Two dishes per pot (or per a couple of pots): same ingredients, new meaning after a serve.
     for (const q of pots) {
       const len = q.dishes[0].len;
@@ -205,16 +240,16 @@ export function planLevel(n: number): LevelPlan {
     }
     used.push('queue');
   }
-  if (want('skewer', tier === 'hard' || tier === 'superhard' ? 0.5 : tier === 'relax' ? 0 : 0.3)) {
+  if (want('skewer')) {
     rules.bowlOrder = 'lifo';
     rules.bowl = Math.max(rules.bowl, 3);
     used.push('skewer');
   }
-  if (want('pads', 0.3) && w >= 5) {
+  if (want('pads') && w >= 5) {
     p.pads = intro === 'pads' ? 2 : rng.int(1, 3);
     used.push('pads');
   }
-  if (want('knife', 0.25)) {
+  if (want('knife')) {
     // The knife bar works on up/down lanes: two pots, walls on the sides.
     const mid = Math.floor(h / 2);
     p.bars = [{ kind: 'knife', axis: 'h', at: mid, from: 0, to: w }];
@@ -225,10 +260,29 @@ export function planLevel(n: number): LevelPlan {
     p.stacks = 0;
     used.splice(0, used.length, ...used.filter((m) => m !== 'stacks' && m !== 'lids' && m !== 'queue' && m !== 'salad'), 'knife');
   }
-  if (want('frozen', 0.3)) {
+  if (want('frozen')) {
     p.frozen = intro === 'frozen' ? 3 : rng.int(2, 4);
     used.push('frozen');
   }
+
+  // Recipes must stay readable on a phone: at most 9 items per pot, or two dishes of up to 7 once
+  // pots cook two dishes.
+  const split = has('queue') && !intro;
+  for (const q of pots) {
+    const total = q.dishes.reduce((a, d) => a + d.len, 0);
+    const max = split ? 14 : 9;
+    if (total <= max && (q.dishes.length > 1 || total <= 9)) continue;
+    const t2 = Math.min(total, max);
+    if (t2 > 9) {
+      const a = Math.ceil(t2 / 2);
+      q.dishes = [{ ...q.dishes[0], len: a }, { ...q.dishes[0], len: t2 - a, kind: undefined }];
+      if (!used.includes('queue')) used.push('queue');
+    } else if (q.dishes.length > 1) {
+      const a = Math.ceil(t2 / 2);
+      q.dishes = [{ ...q.dishes[0], len: a }, { ...q.dishes[1], len: t2 - a }];
+    } else q.dishes = [{ ...q.dishes[0], len: t2 }];
+  }
+  if (p.bars) shape = 'knife';
 
   const params: GenParams = {
     w, h, pots, rules,

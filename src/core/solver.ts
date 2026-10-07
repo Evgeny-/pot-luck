@@ -236,34 +236,61 @@ export function playout(start: Sim, rng: Rng, policy: Policy): boolean {
 }
 
 /**
- * A player who looks `depth` moves ahead among the `beam` most natural moves, judging the result
- * with `positionScore`.
+ * Plays the best-looking move for up to `limit` moves; returns Infinity on a win, -1 when it jams
+ * within the horizon, otherwise how many items were delivered.
  */
-export function plannerPlayout(start: Sim, rng: Rng, depth = 2, beam = 6): boolean {
+function naturalRollout(start: Sim, limit = 400): number {
   const sim = start.clone();
-  const look = (s: Sim, d: number): number => {
-    const moves = s.legalMoves();
-    if (d === 0 || !moves.length || s.status !== 'playing') return positionScore(s, moves);
-    const cand = moves.map((m) => [m, moveScore(s, m)] as const).sort((a, b) => b[1] - a[1]).slice(0, beam);
+  const moves: number[] = [];
+  for (let k = 0; k < limit; k++) {
+    if (sim.status === 'won') return Infinity;
+    sim.legalMoves(moves);
+    if (!moves.length) return -1;
+    let pick = moves[0];
     let best = -Infinity;
-    for (const [m] of cand) {
-      const next = s.clone();
-      next.apply(m);
-      best = Math.max(best, look(next, d - 1));
-      if (best >= 1e7) break;
+    for (const m of moves) {
+      const s = moveScore(sim, m);
+      if (s > best) {
+        best = s;
+        pick = m;
+      }
     }
-    return best;
-  };
+    sim.apply(pick);
+  }
+  return sim.status === 'won' ? Infinity : sim.delivered;
+}
+
+/** How far ahead the simulated thinking player looks (moves of natural play after its own). */
+export const PLANNER_HORIZON = 5;
+
+/**
+ * A thoughtful player: for each of the `beam` most natural moves, imagines the next few moves of
+ * natural play (`horizon`). It skips moves that jam the kitchen within that horizon and otherwise
+ * takes the most natural one. Traps that only bite later still catch it, like a person who thinks
+ * a few moves ahead but not to the end.
+ */
+export function plannerPlayout(start: Sim, rng: Rng, beam = 4, horizon = PLANNER_HORIZON): boolean {
+  const sim = start.clone();
   for (let guard = 0; guard < 1000; guard++) {
     if (sim.status === 'won') return true;
     const moves = sim.legalMoves();
     if (!moves.length) return false;
-    let pick = moves[0];
-    let best = -Infinity;
-    for (const m of moves) {
+    const cand = moves.map((m) => [m, moveScore(sim, m) + rng.next() * 30] as const).sort((a, b) => b[1] - a[1]).slice(0, beam);
+    let pick = cand[0][0];
+    let best = -2;
+    for (const [m] of cand) {
       const next = sim.clone();
       next.apply(m);
-      const v = look(next, depth - 1) + moveScore(sim, m) * 0.002 + rng.next() * 3;
+      const v = naturalRollout(next, horizon);
+      if (v === Infinity) {
+        pick = m;
+        break;
+      }
+      // The first (most natural) move that doesn't jam within the horizon.
+      if (v >= 0) {
+        pick = m;
+        break;
+      }
       if (v > best) {
         best = v;
         pick = m;

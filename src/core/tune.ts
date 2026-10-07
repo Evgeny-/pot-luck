@@ -3,35 +3,72 @@ import { buildLevel, replay, type GenParams } from './generator';
 import type { LevelPlan, Target } from './progression';
 import { Rng } from './rng';
 import { Sim } from './sim';
-import { effort, minParks, solve, trapReport, winRates, type WinRates } from './solver';
-import { WILD, cloneLevel, ingOf, tokenOf, type Dir, type LevelDef, type LevelStats } from './types';
+import { effort, minParks, solve, trapReport, winRates } from './solver';
+import { cloneLevel, type Dir, type LevelDef, type LevelStats } from './types';
 
 /**
- * Generate → measure → tune, like Pixel Picnic: a hardness knob is bisected against the target
- * bands of the simulated players, then a solver-checked local search nudges the level the rest of
- * the way, and the result has to ask for enough real decisions.
+ * Generate → measure → tune, as in Pixel Picnic: a hardness knob is bisected until the level's
+ * difficulty `d` lands on the campaign curve, the closest candidates are re-measured precisely,
+ * and a solver-checked local search nudges the best one the rest of the way.
  */
 
-function band(v: number, b?: [number, number]): number {
-  if (!b) return 0;
+/**
+ * Difficulty 0..1 from four simulated players and the reference line: how often random tapping,
+ * a casual player, a quick greedy player and a player who thinks five moves ahead fail, and how
+ * many of the decisions along the solution are critical (another move loses). Using every player
+ * keeps the tuner from just exploiting one heuristic's blind spot.
+ */
+export function difficulty(m: { random: number; casual: number; greedy: number; planner: number; critical: number; decisions: number }): number {
+  const critShare = m.decisions ? Math.min(1, (2 * m.critical) / m.decisions) : 0;
+  const d = 0.1 * (1 - m.random) + 0.15 * (1 - m.casual) + 0.3 * (1 - m.greedy) + 0.3 * (1 - m.planner) + 0.15 * critShare;
+  return Math.round(Math.max(0, Math.min(1, d)) * 1000) / 1000;
+}
+
+export interface Measure {
+  random: number;
+  casual: number;
+  greedy: number;
+  planner: number;
+  critical: number;
+  decisions: number;
+  d: number;
+}
+
+function band(v: number, b: [number, number]): number {
   return v < b[0] ? b[0] - v : v > b[1] ? v - b[1] : 0;
 }
 
-export function objective(r: WinRates, t: Target): number {
-  return band(r.greedy, t.greedy) + (r.planner === undefined ? 0.1 : band(r.planner, t.planner)) + band(r.casual, t.casual) * 0.5 + band(r.random, t.random) * 0.5;
+export function objective(m: Measure, t: Target): number {
+  // Stronger players should win at least as often as weaker ones; when they don't, the level only
+  // exploits a particular heuristic and isn't hard in general.
+  const odd = Math.max(0, m.casual - m.greedy - 0.15) + Math.max(0, m.random - m.greedy - 0.1) + Math.max(0, m.greedy - m.planner - 0.1);
+  return Math.max(0, Math.abs(m.d - t.d) - t.tol) * 2 + band(m.greedy, t.greedy) + band(m.planner, t.planner) + odd +
+    Math.max(0, t.minCritical - m.critical) * 0.04;
 }
 
-/** Easier than the target in some respect. */
-export function tooEasy(r: WinRates, t: Target): boolean {
-  return r.greedy > t.greedy[1] || (r.planner ?? 0) > t.planner[1] || r.casual > (t.casual?.[1] ?? 1) || r.random > (t.random?.[1] ?? 1);
+/** Easier than the target. */
+export function tooEasy(m: Measure, t: Target): boolean {
+  return m.d < t.d - t.tol || m.greedy > t.greedy[1] || m.planner > t.planner[1];
 }
 
-/** Player win rates; the slow planner only runs when the cheap players are close to the target. */
-export function rates(level: LevelDef, t: Target, seed: number, runs = 100): WinRates {
-  const r = winRates(level, runs, seed);
-  const quick = band(r.greedy, t.greedy) + band(r.casual, t.casual) * 0.5;
-  if (quick < 0.2) r.planner = winRates(level, 0, seed + 1, 10).planner;
-  return r;
+/**
+ * Measures a level. The trap walk (critical decisions) is the slow part: when the players alone
+ * put the level far from the target it is skipped and estimated as typical for that difficulty.
+ */
+export function measure(level: LevelDef, t: Target, seed: number, runs = 100, plannerRuns = 16, force = false): Measure {
+  const r = winRates(level, runs, seed, plannerRuns);
+  const planner = r.planner ?? 0;
+  const base = { random: r.random, casual: r.casual, greedy: r.greedy, planner, critical: 0, decisions: 1 };
+  const cheap = difficulty(base);
+  if (force || Math.abs(cheap + 0.06 - t.d) < 0.15) {
+    const tr = trapReport(level, level.solution!, 1500, 250);
+    base.critical = tr.critical;
+    base.decisions = tr.decisions;
+  } else {
+    // Far from the target anyway: assume a typical share of critical decisions.
+    base.critical = cheap * 0.4;
+  }
+  return { ...base, d: difficulty(base) };
 }
 
 /** Knob 0..2 → generator settings (beyond 1 the reference line parks more, and needs later items). */
@@ -49,18 +86,18 @@ export function knob(base: GenParams, hard: number): GenParams {
 
 interface Cand {
   level: LevelDef;
-  r: WinRates;
+  m: Measure;
   dist: number;
 }
 
-/** Bisection on the hardness knob; keeps the candidate closest to the target. */
-export function search(plan: LevelPlan, seed: number, attempts = 22): Cand | null {
+/** Bisection on the hardness knob; returns the candidates, closest first. */
+export function search(plan: LevelPlan, seed: number, attempts = 24): Cand[] {
   const rng = new Rng(seed);
   const t = plan.target;
-  let hard = plan.tier === 'intro' || plan.tier === 'relax' ? 0.3 : plan.tier === 'normal' ? 0.8 : 1.2;
+  let hard = t.d < 0.2 ? 0.3 : t.d < 0.4 ? 0.8 : 1.3;
   let easyAt = -1;
   let hardAt = 3;
-  let best: Cand | null = null;
+  const pool: Cand[] = [];
   for (let a = 0; a < attempts; a++) {
     const b = buildLevel(knob(plan.params, hard), seed * 31 + a * 7919);
     if (!b) {
@@ -68,43 +105,35 @@ export function search(plan: LevelPlan, seed: number, attempts = 22): Cand | nul
       continue;
     }
     if (!acceptable(b.level, plan)) continue;
-    const r = rates(b.level, t, seed + a);
-    const dist = objective(r, t);
-    if (!best || dist < best.dist) best = { level: b.level, r, dist };
-    if (dist === 0) break;
-    const easy = tooEasy(r, t);
+    const m = measure(b.level, t, seed + a);
+    const dist = objective(m, t);
+    pool.push({ level: b.level, m, dist });
+    if (dist === 0 && pool.filter((c) => c.dist === 0).length >= 2) break;
+    const easy = tooEasy(m, t);
     if (easy) easyAt = Math.max(easyAt, hard);
     else hardAt = Math.min(hardAt, hard);
-    if (easyAt >= 0 && hardAt <= 2) hard = (easyAt + hardAt) / 2 + (rng.next() - 0.5) * 0.08;
-    else hard = Math.max(0, Math.min(2, hard + (easy ? 1 : -1) * (0.15 + Math.min(0.35, dist)) * (0.7 + rng.next() * 0.6)));
-    if (hardAt - easyAt < 0.04) {
+    if (easyAt >= 0 && hardAt <= 2) hard = (easyAt + hardAt) / 2 + (rng.next() - 0.5) * 0.1;
+    else hard = Math.max(0, Math.min(2, hard + (easy ? 1 : -1) * (0.15 + Math.min(0.35, Math.abs(m.d - t.d))) * (0.7 + rng.next() * 0.6)));
+    if (hardAt - easyAt < 0.05) {
       easyAt = Math.max(-1, easyAt - 0.2);
       hardAt = Math.min(3, hardAt + 0.2);
     }
   }
-  return best;
+  return pool.sort((x, y) => x.dist - y.dist);
 }
 
 /** Mechanics an intro level must actually exercise. */
 function acceptable(level: LevelDef, plan: LevelPlan): boolean {
   if (plan.tier !== 'intro') return true;
-  const sim = Sim.fromLevel(level);
-  const sol = level.solution ?? [];
   if (plan.mechanics.includes('bowl') || plan.mechanics.includes('skewer')) {
     // The bowl must be needed: no solution without parking.
-    const mp = minParks(sim, 20000);
+    const mp = minParks(Sim.fromLevel(level), 20000);
     if (mp.parks < (plan.mechanics.includes('skewer') ? 2 : 1)) return false;
   }
-  if (plan.mechanics.includes('pads')) {
-    const g = geometryOf(level);
-    const turning = level.tiles.filter((t) => tracePath(g, t.x, t.y, t.dir).turns > 0).length;
-    if (turning < 3) return false;
-  }
-  if (plan.mechanics.includes('knife')) {
-    const g = geometryOf(level);
-    if (level.tiles.filter((t) => tracePath(g, t.x, t.y, t.dir).form).length < 3) return false;
-  }
-  return sol.length > 0;
+  const g = geometryOf(level);
+  if (plan.mechanics.includes('pads') && level.tiles.filter((t) => tracePath(g, t.x, t.y, t.dir).turns > 0).length < 3) return false;
+  if (plan.mechanics.includes('knife') && level.tiles.filter((t) => tracePath(g, t.x, t.y, t.dir).form).length < 3) return false;
+  return (level.solution ?? []).length > 0;
 }
 
 // ---------------------------------------------------------------- local search
@@ -118,17 +147,17 @@ function mutate(src: LevelDef, rng: Rng): LevelDef | null {
   for (const p of l.pads ?? []) occupied.add(p.y * w + p.x);
   const kind = rng.next();
   const hold = l.rules.bowlMode === 'hold';
-  const free = (t: LevelDef['tiles'][0]) => !l.tiles.some((o) => o !== t && o.x === t.x && o.y === t.y);
+  const alone = (t: LevelDef['tiles'][0]) => !l.tiles.some((o) => o !== t && o.x === t.x && o.y === t.y);
   if (kind < 0.35) {
     // Move a tile to an empty cell, keeping what it delivers and where.
-    const t = rng.pick(l.tiles.filter(free));
-    if (!t) return null;
+    const movable = l.tiles.filter(alone);
+    if (!movable.length) return null;
+    const t = rng.pick(movable);
     const before = tracePath(g, t.x, t.y, t.dir);
     const cells = [...Array(w * h).keys()].filter((c) => !occupied.has(c));
     if (!cells.length) return null;
     const c = rng.pick(cells);
-    const dirs = rng.shuffle([0, 1, 2, 3] as Dir[]);
-    for (const d of dirs) {
+    for (const d of rng.shuffle([0, 1, 2, 3] as Dir[])) {
       const p = tracePath(g, c % w, Math.floor(c / w), d);
       if (p.pot !== before.pot || p.form !== before.form) continue;
       t.x = c % w;
@@ -173,7 +202,7 @@ function mutate(src: LevelDef, rng: Rng): LevelDef | null {
   return l;
 }
 
-/** Solver-checked local search toward the target bands. */
+/** Solver-checked local search toward the target. */
 export function tune(start: Cand, plan: LevelPlan, seed: number, iters = 60): Cand {
   const rng = new Rng(seed ^ 0x5bd1e995);
   let best = start;
@@ -184,52 +213,47 @@ export function tune(start: Cand, plan: LevelPlan, seed: number, iters = 60): Ca
     if (res.status !== 'solved') continue;
     cand.solution = res.moves;
     if (!acceptable(cand, plan)) continue;
-    const r = rates(cand, plan.target, seed + it * 13);
-    const dist = objective(r, plan.target);
-    if (dist < best.dist) best = { level: cand, r, dist };
+    const m = measure(cand, plan.target, seed + it * 13);
+    const dist = objective(m, plan.target);
+    if (dist < best.dist) best = { level: cand, m, dist };
   }
   return best;
 }
 
-/** Combined difficulty 0..1 for ordering and plotting the campaign. */
-export function difficulty(s: Pick<LevelStats, 'greedy' | 'planner' | 'critical' | 'traps' | 'casual'>): number {
-  const d = 0.3 * (1 - s.greedy) + 0.3 * (1 - s.planner) + 0.15 * (1 - s.casual) + 0.15 * Math.min(1, s.critical / 10) + 0.1 * Math.min(1, s.traps / 0.08);
-  return Math.round(Math.max(0, Math.min(1, d)) * 1000) / 1000;
-}
-
-/** Full measurement for a finished level (slow: more runs, traps, effort, par). */
+/** Full measurement for a finished level (more games, traps, effort, par). */
 export function finalStats(level: LevelDef, seed: number): LevelStats {
-  const r = winRates(level, 200, seed, 24);
+  const r = winRates(level, 200, seed, 40);
   const sol = level.solution ?? solve(Sim.fromLevel(level), 100000).moves;
   const tr = trapReport(level, sol, 2000, 500);
   const ef = effort(level, 5, seed);
   const mp = minParks(Sim.fromLevel(level), 60000);
   const nodes = solve(Sim.fromLevel(level), 100000).nodes;
-  const stats: LevelStats = {
-    random: r.random, casual: r.casual, greedy: r.greedy, planner: r.planner ?? 0,
+  const planner = r.planner ?? 0;
+  return {
+    random: r.random, casual: r.casual, greedy: r.greedy, planner,
     critical: tr.critical, decisions: tr.decisions, traps: +tr.traps.toFixed(4), firstTraps: +tr.firstTraps.toFixed(3),
-    effort: +ef.d.toFixed(3), par: mp.parks, nodes, d: 0,
+    effort: +ef.d.toFixed(3), par: mp.parks, nodes,
+    d: difficulty({ random: r.random, casual: r.casual, greedy: r.greedy, planner, critical: tr.critical, decisions: tr.decisions }),
   };
-  stats.d = difficulty(stats);
-  return stats;
 }
 
-/** A level for the plan: search, tune, then make sure it asks for enough decisions. */
-export function generateFor(plan: LevelPlan, seed: number): { level: LevelDef; dist: number; r: WinRates; critical: number } | null {
-  let best = search(plan, seed);
-  if (!best) return null;
-  if (best.dist > 0) best = tune(best, plan, seed, plan.tier === 'superhard' ? 120 : 70);
-  let crit = trapReport(best.level, best.level.solution!, 1500, 250).critical;
-  for (let round = 1; round <= 2 && crit < plan.target.minCritical; round++) {
-    // Not enough real decisions: search again with a stricter greedy band, keep the better one.
-    const strict: LevelPlan = { ...plan, target: { ...plan.target, greedy: [plan.target.greedy[0] * 0.7, Math.max(plan.target.greedy[0], plan.target.greedy[1] - 0.12 * round)] } };
-    const again = search(strict, seed + round * 101);
-    if (!again) continue;
-    const c2 = trapReport(again.level, again.level.solution!, 1500, 250).critical;
-    const d2 = objective(again.r, plan.target);
-    if (c2 > crit && d2 <= best.dist + 0.15) {
-      best = { ...again, dist: d2 };
-      crit = c2;
+/** A level for the plan: search, re-measure the closest candidates precisely, tune the best. */
+export function generateFor(plan: LevelPlan, seed: number): { level: LevelDef; dist: number; m: Measure } | null {
+  const pool = search(plan, seed);
+  if (!pool.length) return null;
+  // Screening is noisy: re-measure the three closest with more games and keep the closest.
+  const t = plan.target;
+  const finals = pool.slice(0, 3).map((c, k) => {
+    const m = measure(c.level, t, seed + 900 + k, 240, 40, true);
+    return { level: c.level, m, dist: objective(m, t) };
+  }).sort((a, b) => a.dist - b.dist);
+  let best = finals[0];
+  if (best.dist > 0) {
+    const tuned = tune(best, plan, seed, plan.tier === 'superhard' ? 120 : 70);
+    if (tuned !== best) {
+      const m = measure(tuned.level, t, seed + 977, 240, 40, true);
+      const dist = objective(m, t);
+      if (dist < best.dist) best = { level: tuned.level, m, dist };
     }
   }
   const level = best.level;
@@ -238,7 +262,5 @@ export function generateFor(plan: LevelPlan, seed: number): { level: LevelDef; d
     if (res.status !== 'solved') return null;
     level.solution = res.moves;
   }
-  return { level, dist: best.dist + Math.max(0, plan.target.minCritical - crit) * 0.03, r: best.r, critical: crit };
+  return { level, dist: best.dist, m: best.m };
 }
-
-export { WILD, ingOf, tokenOf };
