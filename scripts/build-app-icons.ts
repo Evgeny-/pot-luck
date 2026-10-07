@@ -41,11 +41,14 @@ function ico(images: RenderedImage[]): Buffer {
     for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
       const src = ((size - 1 - y) * size + x) * 4;
       const dst = 40 + (y * size + x) * 4;
-      payload[dst] = pixels[src + 2];
-      payload[dst + 1] = pixels[src + 1];
-      payload[dst + 2] = pixels[src];
-      payload[dst + 3] = pixels[src + 3];
-      if (pixels[src + 3] < 128) {
+      // Resvg exposes premultiplied RGB; ICO DIBs store straight-alpha channels.
+      const alpha = pixels[src + 3];
+      const channel = (index: number) => alpha === 0 ? 0 : Math.min(255, Math.round(pixels[src + index] * 255 / alpha));
+      payload[dst] = channel(2);
+      payload[dst + 1] = channel(1);
+      payload[dst + 2] = channel(0);
+      payload[dst + 3] = alpha;
+      if (alpha < 128) {
         const maskOffset = 40 + size * size * 4 + y * maskStride + Math.floor(x / 8);
         payload[maskOffset] |= 1 << (7 - x % 8);
       }
