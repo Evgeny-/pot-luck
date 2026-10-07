@@ -9,7 +9,7 @@
     </filter>
   </defs>
   <rect width="64" height="64" fill="#fff4d7"/>
-  <g id="pot-luck-mark" filter="url(#sticker)" stroke="#3b2a1e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+  <g id="pot-luck-mark" transform="translate(6.4 6.4) scale(0.8)" filter="url(#sticker)" stroke="#3b2a1e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
     <path d="M14 28H9a5 5 0 0 0 0 10h7m34-10h5a5 5 0 0 1 0 10h-7" fill="#d9343a"/>
     <path d="M13 29h38l-2 12c-1.4 7.4-8.3 12-17 12s-15.6-4.6-17-12Z" fill="#e84343"/>
     <path d="M17 42c3.6 5.5 9.1 8 15 8s11.4-2.5 15-8" fill="none" stroke="#bd2939" stroke-width="4"/>

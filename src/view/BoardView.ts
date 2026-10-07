@@ -275,20 +275,8 @@ export class BoardView {
     Object.assign(this.boardEl.style, { left: `${left}px`, top: `${top}px`, width: `${bw}px`, height: `${bh}px` });
     this.ox = left + PAD;
     this.oy = top + PAD;
-    // Walls on edges without a pot; floor marks, pads and bars.
-    this.boardEl.querySelectorAll('.edge-wall,.cell-dot,.pad,.bar,.bar-icon').forEach((e) => e.remove());
-    for (const side of [0, 1, 2, 3] as Dir[]) {
-      const row = this.g.edge[side];
-      for (let k = 0; k < row.length; k++) {
-        if (row[k] >= 0) continue;
-        const el = h('div', { class: 'edge-wall' });
-        const s = side === 0 || side === 2;
-        const x = s ? PAD + k * cell + 3 : side === 1 ? bw - 5 : 0;
-        const y = s ? (side === 0 ? 0 : bh - 5) : PAD + k * cell + 3;
-        Object.assign(el.style, { left: `${x}px`, top: `${y}px`, width: `${s ? cell - 6 : 5}px`, height: `${s ? 5 : cell - 6}px` });
-        this.boardEl.append(el);
-      }
-    }
+    // Floor marks, pads and bars. Empty recipe edges need no extra rails.
+    this.boardEl.querySelectorAll('.cell-dot,.pad,.bar,.bar-icon').forEach((e) => e.remove());
     for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) {
       const d = h('div', { class: 'cell-dot' });
       Object.assign(d.style, { left: `${PAD + (x + 0.5) * cell}px`, top: `${PAD + (y + 0.5) * cell}px` });
