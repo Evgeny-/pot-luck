@@ -429,7 +429,6 @@ describe('audio with a mocked AudioContext', () => {
       // past the crossfade: one song only
       const steady = fresh.filter((s) => s.startAt! > ctx.currentTime - 30);
       expect(maxOverlap(steady), theme).toBeLessThanOrEqual(40);
-      { const ahead = fresh.map((x) => x.startAt! - x.createdAt); console.log('STATS', theme, 'sources', fresh.length, 'per s', (steady.length / 30).toFixed(1), 'maxOverlapSrc', maxOverlap(steady), 'ahead max', Math.max(...ahead).toFixed(3), 'min', Math.min(...ahead).toFixed(3)); }
     }
     // the same theme again does not restart it
     const n = ctx.nodes.length;

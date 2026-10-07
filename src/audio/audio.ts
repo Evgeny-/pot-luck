@@ -12,6 +12,8 @@
  *                └─ send ─► song fade ─► musicWet ─► duck ─► reverb (one light kitchen room)
  *
  * Volumes sit before the shared reverb, so the music and SFX sliders also scale their echoes.
+ * Voices reach their bus through cached pan/send lanes (no panner or send node per note), constant
+ * pitches stay off the automation timeline, and voice caps bound the work: cheap enough for phones.
  */
 
 export type SfxName =
@@ -175,10 +177,17 @@ const chordTones = (d: number, lo: number, hi: number, size = 3) => {
 
 // ---------------------------------------------------------------- voice specs
 
-/** Where a voice goes: a dry destination, an optional reverb send, and optional voice accounting. */
+/** A shared route for voices at one stereo position and reverb amount (no per-voice panner or send). */
+interface Lane {
+  dest: AudioNode;
+  send: GainNode | null;
+}
+
+/** Where voices go: a dry destination, an optional reverb input, cached lanes, optional voice accounting. */
 interface Out {
   dry: AudioNode;
   wet: AudioNode | null;
+  lanes: Map<number, Lane>;
   track?: Voices;
 }
 
@@ -331,7 +340,7 @@ export class AudioEngine implements Audio {
     this.sfxWet = gain(this.sfxVol, reverb);
     this.duckWet = gain(1, reverb);
     this.musicWet = gain(this.musicVol * MUSIC_TRIM, this.duckWet);
-    this.sfxOut = { dry: this.sfxBus, wet: this.sfxWet, track: this.sfxVoices };
+    this.sfxOut = { dry: this.sfxBus, wet: this.sfxWet, lanes: new Map(), track: this.sfxVoices };
     // Two seconds of white noise, looped and filtered into swishes, steam, shakers and breath.
     const sr = ctx.sampleRate;
     this.noiseBuf = ctx.createBuffer(1, sr * 2, sr);
@@ -478,23 +487,35 @@ export class AudioEngine implements Audio {
 
   // ---------------------------------------------------------------- building blocks
 
-  /** Sends a voice to its destination (panned if asked) and to the shared room. */
+  /**
+   * Sends a voice to its destination and the shared room through a cached lane (pan in steps of 1/8,
+   * reverb send in steps of 0.05), so a voice costs no panner or send node of its own.
+   */
   private route(src: AudioNode, o: Out, e: Env): void {
     const ctx = this.ctx!;
-    const pan = clamp(finite(e.pan, 0), -1, 1);
-    if (Math.abs(pan) > 0.01 && typeof ctx.createStereoPanner === 'function') {
-      const p = ctx.createStereoPanner();
-      p.pan.value = pan;
-      src.connect(p);
-      p.connect(o.dry);
-    } else src.connect(o.dry);
-    const wet = finite(e.wet, 0);
-    if (wet > 0 && o.wet) {
-      const s = ctx.createGain();
-      s.gain.value = wet;
-      src.connect(s);
-      s.connect(o.wet);
+    const pan = Math.round(clamp(finite(e.pan, 0), -1, 1) * 8) / 8;
+    const wet = o.wet ? Math.round(clamp(finite(e.wet, 0), 0, 1) * 20) / 20 : 0;
+    const key = pan * 100 + wet;
+    let lane = o.lanes.get(key);
+    if (!lane) {
+      let dest: AudioNode = o.dry;
+      if (pan !== 0 && typeof ctx.createStereoPanner === 'function') {
+        const p = ctx.createStereoPanner();
+        p.pan.value = pan;
+        p.connect(o.dry);
+        dest = p;
+      }
+      let send: GainNode | null = null;
+      if (wet > 0 && o.wet) {
+        send = ctx.createGain();
+        send.gain.value = wet;
+        send.connect(o.wet);
+      }
+      lane = { dest, send };
+      o.lanes.set(key, lane);
     }
+    src.connect(lane.dest);
+    if (lane.send) src.connect(lane.send);
   }
 
   /** Attack, hold, then an exponential (or linear) fall to true silence. Returns the silent time. */
@@ -536,8 +557,11 @@ export class AudioEngine implements Audio {
       const f = ctx.createBiquadFilter();
       f.type = 'lowpass';
       f.Q.value = s.q ?? 0.7;
-      f.frequency.setValueAtTime(s.lp, t);
-      if (s.lpTo) f.frequency.exponentialRampToValueAtTime(s.lpTo, t + Math.max(0.01, s.lpT ?? (end - t) * 0.5));
+      // Constant values stay off the automation timeline: cheaper (no per-sample coefficients).
+      if (s.lpTo) {
+        f.frequency.setValueAtTime(s.lp, t);
+        f.frequency.exponentialRampToValueAtTime(s.lpTo, t + Math.max(0.01, s.lpT ?? (end - t) * 0.5));
+      } else f.frequency.value = s.lp;
       f.connect(head);
       head = f;
     }
@@ -559,12 +583,12 @@ export class AudioEngine implements Audio {
       osc.type = part.type ?? 'sine';
       const mul = part.mul ?? 1;
       const fq = osc.frequency;
-      fq.setValueAtTime(s.f * mul, t);
       if (s.to) {
         const t1 = t + (s.at ?? 0);
+        fq.setValueAtTime(s.f * mul, t);
         if (s.at) fq.setValueAtTime(s.f * mul, t1);
         fq.exponentialRampToValueAtTime(s.to * mul, t1 + Math.max(0.005, s.glide ?? (end - t1) * 0.6));
-      }
+      } else fq.value = s.f * mul;
       if (part.det) osc.detune.value = part.det;
       if (lfoGain) lfoGain.connect(osc.detune);
       if (part.g !== undefined && part.g !== 1) {
@@ -598,8 +622,10 @@ export class AudioEngine implements Audio {
     const f = ctx.createBiquadFilter();
     f.type = s.type ?? 'bandpass';
     f.Q.value = s.q ?? 1;
-    f.frequency.setValueAtTime(s.f, t);
-    if (s.to) f.frequency.exponentialRampToValueAtTime(s.to, t + Math.max(0.01, s.sweep ?? end - t));
+    if (s.to) {
+      f.frequency.setValueAtTime(s.f, t);
+      f.frequency.exponentialRampToValueAtTime(s.to, t + Math.max(0.01, s.sweep ?? end - t));
+    } else f.frequency.value = s.f;
     src.connect(f);
     if (s.lp) {
       const l = ctx.createBiquadFilter();
@@ -623,12 +649,15 @@ export class AudioEngine implements Audio {
     const mg = ctx.createGain();
     const g = ctx.createGain();
     const end = this.env(g.gain, t, s);
-    car.frequency.setValueAtTime(s.f, t);
-    mod.frequency.setValueAtTime(s.f * s.ratio, t);
     if (s.to) {
       const t1 = t + Math.max(0.005, s.glide ?? (end - t) * 0.5);
+      car.frequency.setValueAtTime(s.f, t);
+      mod.frequency.setValueAtTime(s.f * s.ratio, t);
       car.frequency.exponentialRampToValueAtTime(s.to, t1);
       mod.frequency.exponentialRampToValueAtTime(s.to * s.ratio, t1);
+    } else {
+      car.frequency.value = s.f;
+      mod.frequency.value = s.f * s.ratio;
     }
     if (s.det) {
       car.detune.value = s.det;
@@ -702,7 +731,7 @@ export class AudioEngine implements Audio {
       case 'slide': {
         // A short airy swish rising as the tile slides away.
         const f = 850 * P * jit(0.15);
-        this.noise(o, t, { f, to: f * 2.6, q: 0.9, g: 0.05 * v, a: 0.06, d: 0.17, pan, lp: 5000, wet: 0.1 });
+        this.noise(o, t, { f, to: f * 2.4, q: 0.9, g: 0.085 * v, a: 0.06, d: 0.17, pan, lp: 3200, wet: 0.1 });
         break;
       }
       case 'plop': {
@@ -721,23 +750,24 @@ export class AudioEngine implements Audio {
       case 'park': {
         // Into the side bowl: a light ceramic clink (two inharmonic partials) and a soft settle.
         const f = 1240 * P * jit(0.05);
-        this.tone(o, t, { f, g: 0.07 * v, a: 0.001, d: 0.22, pan, wet: 0.22 });
-        this.tone(o, t, { f: f * 2.37, g: 0.03 * v, a: 0.001, d: 0.1, pan, wet: 0.22 });
+        this.tone(o, t, { f, g: 0.09 * v, a: 0.001, d: 0.22, pan, wet: 0.22 });
+        this.tone(o, t, { f: f * 2.37, g: 0.035 * v, a: 0.001, d: 0.1, pan, wet: 0.22 });
         this.noise(o, t, { f: 3200, q: 2, g: 0.022 * v, a: 0.001, d: 0.012, pan });
-        this.tone(o, t, { f: 260 * P, to: 190 * P, glide: 0.04, g: 0.06 * v, a: 0.002, d: 0.06, pan });
+        this.tone(o, t, { f: 260 * P, to: 190 * P, glide: 0.04, g: 0.075 * v, a: 0.002, d: 0.06, pan });
         break;
       }
       case 'bowlOut': {
         // A small cork-like pop: a quick upward pitch flick with a puff of air.
         const f = 420 * P * jit(0.08);
-        this.tone(o, t, { f, to: f * 2.3, glide: 0.03, g: 0.16 * v, a: 0.002, d: 0.07, pan, wet: 0.12 });
-        this.noise(o, t, { f: 1400, q: 0.8, g: 0.05 * v, a: 0.001, d: 0.025, pan, lp: 3500 });
+        this.tone(o, t, { f, to: f * 2.3, glide: 0.03, g: 0.22 * v, a: 0.002, d: 0.07, pan, wet: 0.12 });
+        this.noise(o, t, { f: 1400, q: 0.8, g: 0.065 * v, a: 0.001, d: 0.025, pan, lp: 3500 });
         break;
       }
       case 'blocked': {
         // A dull, soft wooden thunk and a quieter settle: "can't go".
-        this.tone(o, t, { type: 'triangle', f: 165 * P, to: 110 * P, glide: 0.07, lp: 600, g: 0.2 * v, a: 0.003, d: 0.14, pan, wet: 0.06 });
-        this.noise(o, t, { type: 'lowpass', f: 500, g: 0.05 * v, a: 0.001, d: 0.03, pan });
+        this.tone(o, t, { type: 'triangle', f: 165 * P, to: 110 * P, glide: 0.07, lp: 600, g: 0.17 * v, a: 0.003, d: 0.14, pan, wet: 0.06 });
+        this.tone(o, t, { f: 430 * P, to: 340 * P, glide: 0.04, g: 0.1 * v, a: 0.002, d: 0.08, pan });
+        this.noise(o, t, { f: 800, q: 1.2, g: 0.08 * v, a: 0.001, d: 0.035, pan, lp: 2000 });
         this.tone(o, t + 0.09, { type: 'triangle', f: 140 * P, to: 100 * P, glide: 0.05, lp: 500, g: 0.06 * v, a: 0.003, d: 0.1, pan });
         break;
       }
@@ -753,7 +783,7 @@ export class AudioEngine implements Audio {
       }
       case 'serve': {
         // "Ding!" — the service bell, then a soft sizzle with a few crackles.
-        this.bell(o, t, 1318.5 * P, 0.11 * v, pan, 1.7);
+        this.bell(o, t, 1318.5 * P, 0.085 * v, pan, 1.7);
         this.tone(o, t, { f: 1318.5 * P * 5.4, g: 0.008 * v, a: 0.001, d: 0.12, pan });
         this.noise(o, t + 0.05, { f: 4200, q: 0.6, g: 0.014 * v, a: 0.08, h: 0.12, d: 0.45, lp: 7000, pan: pan * 0.5, wet: 0.2 });
         for (let i = 0; i < 9; i++) {
@@ -780,7 +810,7 @@ export class AudioEngine implements Audio {
         const f = 1050 * P;
         this.tone(o, t, { f, to: f * 1.9, glide: 0.22, g: 0.045 * v, a: 0.04, d: 0.6, pan, wet: 0.45 });
         this.tone(o, t, { f: f * 2.76, to: f * 2.76 * 1.9, glide: 0.22, g: 0.016 * v, a: 0.04, d: 0.35, pan, wet: 0.45 });
-        this.noise(o, t, { f: 1800, to: 6000, sweep: 0.25, q: 1.6, g: 0.03 * v, a: 0.14, d: 0.22, pan, lp: 8000, wet: 0.35 });
+        this.noise(o, t, { f: 1500, to: 4500, sweep: 0.25, q: 1.6, g: 0.022 * v, a: 0.14, d: 0.22, pan, lp: 6000, wet: 0.35 });
         this.fm(o, t + 0.2, { f: mtof(100) * P, ratio: 3.5, index: 0.3, g: 0.03 * v, d: 0.7, pan, wet: 0.5 });
         break;
       }
@@ -790,7 +820,7 @@ export class AudioEngine implements Audio {
           this.noise(o, t + dt, { f: 3000, q: 3, g: 0.05 * v, a: 0.001, d: 0.015, pan });
           this.tone(o, t + dt, { f: 1900 * P, g: 0.03 * v, a: 0.001, d: 0.025, pan });
         }
-        this.bell(o, t + 0.26, mtof(93) * P, 0.075 * v, pan, 0.9);
+        this.bell(o, t + 0.26, mtof(93) * P, 0.045 * v, pan, 0.9);
         break;
       }
       case 'link': {
@@ -805,7 +835,7 @@ export class AudioEngine implements Audio {
       }
       case 'thaw': {
         // Ice melting: a few glassy pings, a whisper of frost, then a droplet of meltwater.
-        const notes = [88, 91, 93, 96, 98, 100];
+        const notes = [84, 86, 88, 91, 93, 96];
         for (let i = 0; i < 4; i++) {
           const f = mtof(notes[Math.floor(Math.random() * notes.length)]) * P;
           const dt = i * 0.045 + Math.random() * 0.02;
@@ -813,25 +843,26 @@ export class AudioEngine implements Audio {
           this.tone(o, t + dt, { f, g: 0.035 * v, a: 0.001, d: 0.35, pan: pp, wet: 0.45 });
           this.tone(o, t + dt, { f: f * 2.71, g: 0.01 * v, a: 0.001, d: 0.08, pan: pp });
         }
-        this.noise(o, t, { type: 'highpass', f: 4000, g: 0.016 * v, a: 0.02, d: 0.18, lp: 9000, pan, wet: 0.3 });
+        this.noise(o, t, { type: 'highpass', f: 3500, g: 0.01 * v, a: 0.02, d: 0.18, lp: 7000, pan, wet: 0.3 });
         const dr = 900 * P * jit(0.1);
         this.tone(o, t + 0.22, { f: dr, to: dr * 1.7, glide: 0.04, g: 0.05 * v, a: 0.002, d: 0.07, pan, wet: 0.25 });
         break;
       }
       case 'win': {
+        const w = v * 0.7;
         // "Order up!": a marimba run, a "ta-daa", the order bell over a kalimba chord, two sparkles.
-        [67, 72, 76, 79].forEach((m, i) => this.mallet(o, t + i * 0.09, mtof(m), 0.12 * v, -0.3 + i * 0.2));
-        this.mallet(o, t + 0.4, mtof(81), 0.1 * v, 0.2, 0.3);
-        this.mallet(o, t + 0.4, mtof(77), 0.07 * v, -0.2, 0.3);
+        [67, 72, 76, 79].forEach((m, i) => this.mallet(o, t + i * 0.09, mtof(m), 0.12 * w, -0.3 + i * 0.2));
+        this.mallet(o, t + 0.4, mtof(81), 0.1 * w, 0.2, 0.3);
+        this.mallet(o, t + 0.4, mtof(77), 0.07 * w, -0.2, 0.3);
         const hit = t + 0.56;
-        [84, 79, 76].forEach((m) => this.mallet(o, hit, mtof(m), 0.08 * v, 0, 1));
-        this.bell(o, hit + 0.02, mtof(91), 0.07 * v, 0.15, 1.6);
+        [84, 79, 76].forEach((m) => this.mallet(o, hit, mtof(m), 0.08 * w, 0, 1));
+        this.bell(o, hit + 0.02, mtof(91), 0.07 * w, 0.15, 1.6);
         [60, 67, 72, 76, 79].forEach((m, i) =>
-          this.fm(o, hit + 0.05 + i * 0.045, { f: mtof(m), ratio: 5.4, index: 0.6, idxT: 0.1, g: 0.05 * v, d: 1.3, wet: 0.35, pan: (i - 2) * 0.15 }),
+          this.fm(o, hit + 0.05 + i * 0.045, { f: mtof(m), ratio: 5.4, index: 0.6, idxT: 0.1, g: 0.05 * w, d: 1.3, wet: 0.35, pan: (i - 2) * 0.15 }),
         );
-        this.tone(o, hit, { type: 'triangle', f: mtof(48), lp: 700, g: 0.14 * v, a: 0.004, d: 1.2 });
-        this.fm(o, hit + 0.55, { f: mtof(100), ratio: 3.5, index: 0.3, g: 0.022 * v, d: 0.9, wet: 0.6, pan: 0.4 });
-        this.fm(o, hit + 0.8, { f: mtof(103), ratio: 3.5, index: 0.3, g: 0.018 * v, d: 0.9, wet: 0.6, pan: -0.4 });
+        this.tone(o, hit, { type: 'triangle', f: mtof(48), lp: 700, g: 0.09 * w, a: 0.004, d: 1.2 });
+        this.fm(o, hit + 0.55, { f: mtof(100), ratio: 3.5, index: 0.3, g: 0.022 * w, d: 0.9, wet: 0.6, pan: 0.4 });
+        this.fm(o, hit + 0.8, { f: mtof(103), ratio: 3.5, index: 0.3, g: 0.018 * w, d: 0.9, wet: 0.6, pan: -0.4 });
         break;
       }
       case 'star': {
@@ -848,42 +879,42 @@ export class AudioEngine implements Audio {
         // Kitchen jam: a soft descending "aww" (E5 → C5, the second note sagging a little).
         const a = mtof(76) * P;
         const b = mtof(72) * P;
-        this.tone(o, t, { type: 'triangle', f: a, g: 0.075 * v, a: 0.03, h: 0.12, d: 0.25, lin: true, lp: 1800, vib: 12, vibHz: 5, vibAt: 0.05, pan, wet: 0.3 });
+        this.tone(o, t, { type: 'triangle', f: a, g: 0.022 * v, a: 0.03, h: 0.12, d: 0.25, lin: true, lp: 1800, vib: 12, vibHz: 5, vibAt: 0.05, pan, wet: 0.3 });
         this.tone(o, t + 0.3, {
-          type: 'triangle', f: b, to: b * 0.94, at: 0.2, glide: 0.35, g: 0.08 * v, a: 0.04, h: 0.25, d: 0.4, lin: true, lp: 1600, vib: 18, vibHz: 4.5,
+          type: 'triangle', f: b, to: b * 0.94, at: 0.2, glide: 0.35, g: 0.024 * v, a: 0.04, h: 0.25, d: 0.4, lin: true, lp: 1600, vib: 18, vibHz: 4.5,
           vibAt: 0.1, pan, wet: 0.35,
         });
-        this.tone(o, t + 0.3, { f: b / 2, g: 0.04 * v, a: 0.05, h: 0.2, d: 0.4, lin: true, pan });
+        this.tone(o, t + 0.3, { f: b / 2, g: 0.013 * v, a: 0.05, h: 0.2, d: 0.4, lin: true, pan });
         break;
       }
       case 'undo': {
         // A reversed swish: swells in, falls in pitch, stops short.
-        this.noise(o, t, { f: 2600, to: 700, q: 1.1, g: 0.06 * v, a: 0.16, d: 0.06, pan, lp: 5000, wet: 0.15 });
+        this.noise(o, t, { f: 2000, to: 600, q: 1.1, g: 0.065 * v, a: 0.16, d: 0.06, pan, lp: 4000, wet: 0.15 });
         this.tone(o, t + 0.02, { f: 820 * P, to: 520 * P, glide: 0.16, g: 0.03 * v, a: 0.13, d: 0.06, pan, wet: 0.2 });
         break;
       }
       case 'hint': {
         // A soft twinkle: C6, G6, C7.
         [84, 91, 96].forEach((m, i) =>
-          this.fm(o, t + i * 0.075, { f: mtof(m) * P, ratio: 3.5, index: 0.5, idxT: 0.1, g: (0.05 - i * 0.008) * v, d: 0.9, pan: clamp(pan + (i - 1) * 0.2, -1, 1), wet: 0.5 }),
+          this.fm(o, t + i * 0.075, { f: mtof(m) * P, ratio: 3.5, index: 0.3 - i * 0.07, idxT: 0.1, g: (0.045 - i * 0.008) * v, d: 0.9, pan: clamp(pan + (i - 1) * 0.2, -1, 1), wet: 0.5 }),
         );
-        this.noise(o, t + 0.05, { type: 'highpass', f: 5000, g: 0.01 * v, a: 0.05, d: 0.3, lp: 9000, pan, wet: 0.4 });
+        this.noise(o, t + 0.05, { type: 'highpass', f: 4000, g: 0.006 * v, a: 0.05, d: 0.3, lp: 7000, pan, wet: 0.4 });
         break;
       }
       case 'button': {
         // A soft cushioned pop.
         const f = 620 * P * jit(0.04);
-        this.tone(o, t, { f: f * 1.3, to: f, glide: 0.02, g: 0.1 * v, a: 0.002, d: 0.06, pan, wet: 0.05 });
+        this.tone(o, t, { f: f * 1.3, to: f, glide: 0.02, g: 0.13 * v, a: 0.002, d: 0.06, pan, wet: 0.05 });
         this.noise(o, t, { f: 2200, q: 1.2, g: 0.022 * v, a: 0.001, d: 0.012, pan, lp: 5000 });
         break;
       }
       case 'newMechanic': {
         // "Hm? What's this?": kalimba notes climbing, the last one lifting like a question.
         for (const [m, dt] of [[79, 0], [81, 0.11], [84, 0.22], [86, 0.4]] as const) {
-          this.fm(o, t + dt, { f: mtof(m) * P, ratio: 5.4, index: 0.55, idxT: 0.08, g: 0.07 * v, d: 0.7, pan, wet: 0.35 });
+          this.fm(o, t + dt, { f: mtof(m) * P, ratio: 5.4, index: 0.55, idxT: 0.08, g: 0.045 * v, d: 0.7, pan, wet: 0.35 });
         }
-        this.tone(o, t + 0.4, { f: mtof(86) * P, to: mtof(88) * P, at: 0.08, glide: 0.18, g: 0.03 * v, a: 0.01, d: 0.6, pan, wet: 0.4 });
-        this.tone(o, t, { type: 'triangle', f: mtof(55) * P, lp: 800, g: 0.06 * v, a: 0.01, d: 0.6, pan });
+        this.tone(o, t + 0.4, { f: mtof(86) * P, to: mtof(88) * P, at: 0.08, glide: 0.18, g: 0.02 * v, a: 0.01, d: 0.6, pan, wet: 0.4 });
+        this.tone(o, t, { type: 'triangle', f: mtof(55) * P, lp: 800, g: 0.04 * v, a: 0.01, d: 0.6, pan });
         break;
       }
       case 'map': {
@@ -965,7 +996,7 @@ class Song {
     }
     this.dry.connect(eng.musicBus!);
     this.wet.connect(eng.musicWet!);
-    this.out = { dry: this.dry, wet: this.wet };
+    this.out = { dry: this.dry, wet: this.wet, lanes: new Map() };
     this.next = now + 0.1;
     this.timer = setInterval(() => this.pump(), TICK_MS);
     this.pump();
@@ -1062,40 +1093,49 @@ class Song {
     if (this.admit(t, e)) this.eng.fm(this.out, t, { ...e, f: mtof(m), ratio: 7, index: 0.5, idxT: 0.06, idxEnd: 0.01 });
   }
 
-  /** Warm slow pad: two detuned triangles per note through a soft low-pass. */
+  /** Warm slow pad: two detuned triangles per note, the whole chord through one soft low-pass (one voice). */
   pad(t: number, ms: number[], len: number, vel: number): void {
-    for (const m of ms) {
-      const e: Env = { g: 0.028 * vel, a: Math.min(0.6, len * 0.3), h: len * 0.4, d: len * 0.5, lin: true, wet: 0.5 };
-      if (this.admit(t, e)) this.eng.tone(this.out, t, { ...e, type: 'triangle', f: mtof(m), det: -6, add: [{ type: 'triangle', det: 6 }], lp: 1100 });
-    }
+    const e: Env = { g: 0.028 * vel, a: Math.min(0.6, len * 0.3), h: len * 0.4, d: len * 0.5, lin: true, wet: 0.5 };
+    if (!this.admit(t, e)) return;
+    const f = mtof(ms[0]);
+    const add = ms.flatMap((m, i) => {
+      const mul = mtof(m) / f;
+      return i ? [{ type: 'triangle' as const, mul, det: -6 }, { type: 'triangle' as const, mul, det: 6 }] : [{ type: 'triangle' as const, det: 6 }];
+    });
+    this.eng.tone(this.out, t, { ...e, type: 'triangle', f, det: -6, add, lp: 1100 });
   }
 
   /** Round soft bass. */
   softBass(t: number, m: number, len: number, vel: number): void {
-    const e: Env = { g: 0.1 * vel, a: 0.02, d: len, wet: 0.1 };
+    const e: Env = { g: 0.06 * vel, a: 0.02, d: len, wet: 0.1 };
     if (this.admit(t, e)) this.eng.tone(this.out, t, { ...e, type: 'triangle', f: mtof(m), lp: 700, add: [{ g: 0.6 }] });
   }
 
-  /** Mandolin pick (paired strings, a little chorus); tremolo is many short picks in a row. */
-  mandolin(t: number, m: number, vel: number, ring: number, pan = 0): void {
-    const e: Env = { g: 0.032 * vel, a: 0.002, d: ring, pan, wet: 0.25 };
-    if (!this.admit(t, e)) return;
-    this.eng.tone(this.out, t, {
-      ...e, type: 'sawtooth', f: mtof(m), add: [{ type: 'sawtooth', det: 9, g: 0.6 }], lp: 3000, lpTo: 1100, lpT: 0.09, q: 1.6,
-    });
+  /**
+   * Mandolin pick; tremolo is many short picks in a row. Each stroke hits one string of the pair, a few
+   * cents apart, which gives the course its shimmer with a single oscillator per stroke (cheap).
+   */
+  mandolin(t: number, m: number, vel: number, ring: number, pan = 0, det = 0): void {
+    const e: Env = { g: 0.034 * vel, a: 0.002, d: ring, pan, wet: 0.25 };
+    if (this.admit(t, e)) this.eng.tone(this.out, t, { ...e, type: 'sawtooth', f: mtof(m), det, lp: 2400, q: 1.2 });
   }
 
-  /** Accordion reeds: square + saw a few cents apart (musette), soft bellows attack. */
+  /** Accordion chord: per note a square and a saw reed a few cents apart (musette), one bellows (one voice). */
   accordion(t: number, ms: number[], len: number, vel: number): void {
-    for (const m of ms) {
-      const e: Env = { g: 0.016 * vel, a: 0.035, h: Math.max(0.02, len - 0.12), d: 0.12, lin: true, wet: 0.3 };
-      if (this.admit(t, e)) this.eng.tone(this.out, t, { ...e, type: 'square', f: mtof(m), add: [{ type: 'sawtooth', det: 12, g: 0.8 }], lp: 1400, q: 0.5 });
-    }
+    const e: Env = { g: 0.015 * vel, a: 0.035, h: Math.max(0.02, len - 0.12), d: 0.12, lin: true, wet: 0.3 };
+    if (!this.admit(t, e)) return;
+    const f = mtof(ms[0]);
+    const add = ms.flatMap((m, i) => {
+      const mul = mtof(m) / f;
+      const saw = { type: 'sawtooth' as const, mul, det: 12 };
+      return i ? [{ type: 'square' as const, mul }, saw] : [saw];
+    });
+    this.eng.tone(this.out, t, { ...e, type: 'square', f, add, lp: 1400, q: 0.5 });
   }
 
   /** Accordion bass button. */
   accBass(t: number, m: number, len: number, vel: number): void {
-    const e: Env = { g: 0.06 * vel, a: 0.012, h: len * 0.4, d: len * 0.6, lin: true, wet: 0.15 };
+    const e: Env = { g: 0.032 * vel, a: 0.012, h: len * 0.4, d: len * 0.6, lin: true, wet: 0.15 };
     if (this.admit(t, e)) this.eng.tone(this.out, t, { ...e, type: 'square', f: mtof(m), add: [{ type: 'triangle', g: 1.2 }], lp: 520 });
   }
 
@@ -1125,12 +1165,13 @@ class Song {
     if (this.admit(t, e)) this.eng.tone(this.out, t, { ...e, type: 'triangle', f: f0, to: f1, glide: d * 0.4, lp: 900 });
   }
 
-  /** Marimba bar: round fundamental, quick woody overtone at ~4x, optional mallet tick. */
-  marimba(t: number, m: number, vel: number, pan = 0, d = 0.6, click = true): void {
+  /** Marimba bar: round fundamental, quick woody overtone at ~4x, optional mallet tick; `lite` = roll repeats. */
+  marimba(t: number, m: number, vel: number, pan = 0, d = 0.6, click = true, lite = false): void {
     const f = mtof(m);
     const e: Env = { g: 0.08 * vel, a: 0.002, d, pan, wet: 0.2 };
     if (!this.admit(t, e)) return;
     this.eng.tone(this.out, t, { ...e, f });
+    if (lite) return;
     this.eng.tone(this.out, t, { f: f * 3.94, g: e.g * 0.25, a: 0.001, d: Math.min(0.1, d * 0.25), pan });
     if (click) this.eng.noise(this.out, t, { type: 'lowpass', f: 2600, g: 0.018 * vel, a: 0.001, d: 0.012, pan });
   }
@@ -1146,34 +1187,34 @@ class Song {
   /** Guitarrón: deep, round, slightly buzzy pluck. */
   guitarron(t: number, m: number, vel: number): void {
     const f = mtof(m);
-    const e: Env = { g: 0.11 * vel, a: 0.003, d: 0.7, wet: 0.12 };
+    const e: Env = { g: 0.085 * vel, a: 0.003, d: 0.7, wet: 0.12 };
     if (!this.admit(t, e)) return;
     this.eng.tone(this.out, t, { ...e, type: 'triangle', f: f * 1.012, to: f, glide: 0.04, add: [{ type: 'sawtooth', g: 0.35 }], lp: 1300, lpTo: 450, lpT: 0.15, q: 1.2 });
   }
 
   shaker(t: number, vel: number, pan = 0): void {
-    const e: Env = { g: 0.018 * vel, a: 0.012, d: 0.08, pan, wet: 0.08 };
-    if (this.admit(t, e)) this.eng.noise(this.out, t, { ...e, f: 5200, q: 0.9, lp: 9000 });
+    const e: Env = { g: 0.014 * vel, a: 0.012, d: 0.08, pan, wet: 0.08 };
+    if (this.admit(t, e)) this.eng.noise(this.out, t, { ...e, f: 4500, q: 0.9, lp: 8000 });
   }
 
   /** Upright bass: a thumpy pluck with a short bloom. */
   upright(t: number, m: number, len: number, vel: number): void {
     const f = mtof(m);
-    const e: Env = { g: 0.13 * vel, a: 0.005, h: 0.04, d: Math.min(0.9, len * 1.3), wet: 0.08 };
+    const e: Env = { g: 0.06 * vel, a: 0.005, h: 0.04, d: Math.min(0.9, len * 1.3), wet: 0.08 };
     if (this.admit(t, e)) this.eng.tone(this.out, t, { ...e, f: f * 1.02, to: f, glide: 0.03, add: [{ type: 'triangle', g: 0.5 }], lp: 900 });
   }
 
   /** Electric piano (FM 1:1): a warm bark that mellows. */
   epiano(t: number, ms: number[], len: number, vel: number): void {
     for (const m of ms) {
-      const e: Env = { g: 0.035 * vel, a: 0.004, d: clamp(len * 1.2 + 0.15, 0.35, 1.6), pan: (m - 64) * 0.03, wet: 0.25 };
+      const e: Env = { g: 0.05 * vel, a: 0.004, d: clamp(len * 1.2 + 0.15, 0.35, 1.6), pan: (m - 64) * 0.03, wet: 0.25 };
       if (this.admit(t, e)) this.eng.fm(this.out, t, { ...e, f: mtof(m), ratio: 1, index: 1.1, idxT: 0.4, idxEnd: 0.15 });
     }
   }
 
   /** Vibraphone: a soft mallet on a metal bar. */
   vibes(t: number, m: number, vel: number, pan = 0): void {
-    const e: Env = { g: 0.05 * vel, a: 0.002, d: 1.5, pan, wet: 0.4 };
+    const e: Env = { g: 0.06 * vel, a: 0.002, d: 1.5, pan, wet: 0.4 };
     if (this.admit(t, e)) this.eng.fm(this.out, t, { ...e, f: mtof(m), ratio: 4, index: 0.35, idxT: 0.12, idxEnd: 0.05 });
   }
 
@@ -1195,27 +1236,27 @@ class Song {
   }
 
   kick(t: number, vel: number): void {
-    const e: Env = { g: 0.08 * vel, a: 0.003, d: 0.25 };
+    const e: Env = { g: 0.045 * vel, a: 0.003, d: 0.25 };
     if (this.admit(t, e)) this.eng.tone(this.out, t, { ...e, f: 90, to: 52, glide: 0.06 });
   }
 
   /** Tanpura string: two detuned saws, the bridge buzz (jawari) sweeping down after each pluck. */
   tanpura(t: number, m: number, vel: number): void {
-    const e: Env = { g: 0.02 * vel, a: 0.03, d: 3.4, wet: 0.35 };
+    const e: Env = { g: 0.03 * vel, a: 0.03, d: 3.4, wet: 0.35 };
     if (!this.admit(t, e)) return;
-    this.eng.tone(this.out, t, { ...e, type: 'sawtooth', f: mtof(m), det: -4, add: [{ type: 'sawtooth', det: 5 }], lp: 2600, lpTo: 650, lpT: 1.6, q: 2.2 });
+    this.eng.tone(this.out, t, { ...e, type: 'sawtooth', f: mtof(m), det: -4, add: [{ type: 'sawtooth', det: 5 }], lp: 2200, lpTo: 600, lpT: 1.6, q: 2 });
   }
 
   /** Sitar-ish pluck: resonant twang; `from` slides into the note (meend from below, a grace from above). */
   sitar(t: number, m: number, len: number, vel: number, from?: number, pan = 0): void {
-    const e: Env = { g: 0.042 * vel, a: 0.002, d: clamp(len + 0.8, 0.6, 2.2), pan, wet: 0.4 };
+    const e: Env = { g: 0.07 * vel, a: 0.002, d: clamp(len + 0.8, 0.6, 2.2), pan, wet: 0.4 };
     if (!this.admit(t, e)) return;
     const f = mtof(m);
     const slide = from !== undefined && from !== m;
     const up = slide && from! < m;
     this.eng.tone(this.out, t, {
       ...e, type: 'sawtooth', f: slide ? mtof(from!) : f, to: slide ? f : undefined, at: up ? 0.07 : 0.02, glide: up ? 0.2 : 0.05,
-      lp: 4200, lpTo: 1200, lpT: 0.4, q: 4.5,
+      lp: 3200, lpTo: 1100, lpT: 0.4, q: 4,
     });
   }
 
@@ -1356,7 +1397,7 @@ const menu: ThemeSpec = {
 
 /** Italian trattoria waltz in G: accordion oom-pah-pah, mandolin tremolo melody (often in thirds). */
 const italy: ThemeSpec = {
-  bpm: 96, beats: 3, sub: 6, swing: 0, level: 1,
+  bpm: 96, beats: 3, sub: 6, swing: 0, level: 1.25,
   make() {
     const root = 67; // G4
     const A = [0, 3, 4, 0, 5, 1, 4, 0]; // I IV V7 I vi ii V7 I
@@ -1409,8 +1450,9 @@ const italy: ThemeSpec = {
         if (trem && t < trem.until) {
           up = !up;
           const v = (up ? 0.55 : 0.75) * r.range(0.85, 1.1);
-          p.mandolin(t, trem.m, v, 0.17, 0.1);
-          if (trem.m2) p.mandolin(t, trem.m2, v * 0.6, 0.17, -0.1);
+          const det = up ? 6 : -4;
+          p.mandolin(t, trem.m, v, 0.17, 0.1, det);
+          if (trem.m2) p.mandolin(t, trem.m2, v * 0.6, 0.17, -0.1, -det);
         }
       },
     };
@@ -1419,7 +1461,7 @@ const italy: ThemeSpec = {
 
 /** Japanese garden: koto plucks on the miyako-bushi scale (E F A B C), a breathy flute, rare soft drums. */
 const japan: ThemeSpec = {
-  bpm: 60, beats: 4, sub: 2, swing: 0, level: 1,
+  bpm: 60, beats: 4, sub: 2, swing: 0, level: 1.3,
   make() {
     const root = 64; // E4
     const SC = [0, 1, 5, 7, 8];
@@ -1467,7 +1509,7 @@ const japan: ThemeSpec = {
 
 /** Mexican fiesta in C: marimba in parallel thirds with rolls, guitarrón, shaker; 6/8 against 3/4. */
 const mexico: ThemeSpec = {
-  bpm: 100, beats: 2, sub: 3, swing: 0, level: 1,
+  bpm: 100, beats: 2, sub: 3, swing: 0, level: 1.25,
   make() {
     const root = 60; // C4
     const A = [0, 3, 4, 0, 0, 3, 4, 0]; // I IV V7 I I IV V7 I
@@ -1510,7 +1552,7 @@ const mexico: ThemeSpec = {
         }
         const accent = three ? s % 2 === 0 : s % 3 === 0;
         p.shaker(t, accent ? 1 : 0.55, 0.3);
-        p.shaker(t + b.step / 2, 0.3, 0.35);
+        if (r.chance(0.4)) p.shaker(t + b.step / 2, 0.3, 0.35);
         for (const [st, len, rl] of plan) {
           if (st !== s) continue;
           if (st === 0 || (!three && st === 3)) mel = nearest(mel + r.pick([-2, -1, 0, 1, 2]), chordTones(d, 7, 14, dom ? 4 : 3), r);
@@ -1528,8 +1570,8 @@ const mexico: ThemeSpec = {
           for (let j = 0; j < 3; j++) {
             const tt = t + (j * b.step) / 3;
             if (tt >= roll.until) break;
-            p.marimba(tt, roll.m, j === 0 ? 0.65 : 0.5, 0.2, 0.14, j === 0);
-            p.marimba(tt, roll.m2, j === 0 ? 0.45 : 0.35, -0.1, 0.14, false);
+            p.marimba(tt, roll.m, j === 0 ? 0.65 : 0.5, 0.2, 0.14, j === 0, j > 0);
+            p.marimba(tt, roll.m2, j === 0 ? 0.45 : 0.35, -0.1, 0.14, false, true);
           }
         }
       },
@@ -1539,7 +1581,7 @@ const mexico: ThemeSpec = {
 
 /** 1950s diner jukebox in C: walking bass, electric-piano comping, vibes licks, brushes; swung. */
 const usa: ThemeSpec = {
-  bpm: 112, beats: 4, sub: 2, swing: 0.3, level: 1,
+  bpm: 112, beats: 4, sub: 2, swing: 0.3, level: 1.2,
   make() {
     interface Chord { root: number; third: number; v: number[] }
     const CH: Record<string, Chord> = {
@@ -1608,7 +1650,7 @@ const usa: ThemeSpec = {
 
 /** Indian evening (raga Yaman on D): tanpura drone, sitar phrases with slides, soft tabla in keherwa. */
 const india: ThemeSpec = {
-  bpm: 64, beats: 4, sub: 2, swing: 0.05, level: 1,
+  bpm: 64, beats: 4, sub: 2, swing: 0.05, level: 1.8,
   make() {
     const sa = 62; // D4
     const Y = [0, 2, 4, 6, 7, 9, 11];
@@ -1672,7 +1714,7 @@ const india: ThemeSpec = {
 
 /** Chinese teahouse on D major pentatonic: guzheng with glissandi, erhu line, soft woodblock. */
 const china: ThemeSpec = {
-  bpm: 70, beats: 4, sub: 2, swing: 0, level: 1,
+  bpm: 70, beats: 4, sub: 2, swing: 0, level: 1.3,
   make() {
     const root = 62; // D4
     const P5 = [0, 2, 4, 7, 9];
