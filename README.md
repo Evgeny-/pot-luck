@@ -11,7 +11,7 @@ progress stays in your browser.
 
 <p>
   <img src="docs/screenshots/desktop-kitchen.jpg" width="620" alt="Pot Luck on desktop: ingredient stickers on a wooden board, recipe tickets and a knife that chops ingredients crossing its blade">
-  <img src="docs/screenshots/mobile-kitchen.jpg" width="230" alt="Pot Luck on a phone: matching dish and ingredient stickers, a ceramic bowl and its star allowance">
+  <img src="docs/screenshots/mobile-kitchen.jpg" width="230" alt="Pot Luck on a phone: matching dish and ingredient stickers, a ceramic bowl and a compact use counter">
 </p>
 
 ## How to play
