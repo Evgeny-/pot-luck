@@ -3,7 +3,7 @@
  * band, tuned, measured and stored with a solver-verified solution.
  *
  *   bun scripts/build-levels.ts 1-40        build levels 1..40 (skips finished ones)
- *   REBUILD=1 bun scripts/build-levels.ts 7 rebuild level 7
+ *   REBUILD=1 bun scripts/build-levels.ts 7 rebuild level 7 (SEED=2 for different candidates)
  *   bun scripts/build-levels.ts merge       → src/data/levels.json
  *   bun scripts/build-levels.ts report      difficulty curve as text
  *
@@ -47,8 +47,9 @@ function build(n: number): void {
   const plan = planLevel(n);
   const t0 = performance.now();
   let best: ReturnType<typeof generateFor> = null;
+  const offset = Number(process.env.SEED ?? 0) * 104729;
   for (let k = 0; k < 3; k++) {
-    const r = generateFor(plan, n * 1013 + k * 7);
+    const r = generateFor(plan, n * 1013 + k * 7 + offset);
     if (r && (!best || r.dist < best.dist)) best = r;
     if (best && best.dist === 0) break;
   }
@@ -58,6 +59,7 @@ function build(n: number): void {
   }
   const lv = best.level;
   lv.n = n;
+  lv.cuisine = plan.cuisine;
   lv.tier = plan.tier;
   lv.mechanics = plan.mechanics;
   lv.tags = [plan.shape];
@@ -75,7 +77,7 @@ function build(n: number): void {
   );
 }
 
-const arg = process.argv[2] ?? '1-40';
+const arg = process.argv[2] ?? '1-60';
 if (arg === 'merge') merge();
 else if (arg === 'report') report();
 else {

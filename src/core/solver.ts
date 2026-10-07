@@ -47,7 +47,7 @@ export function needDistance(sim: Sim, tile: number): number {
 
 /** Would tile j's lane be clear if tile i were gone? */
 function freedBy(sim: Sim, i: number, j: number): boolean {
-  if (!sim.present[j] || !sim.isTop(j) || sim.isFrozen(j)) return false;
+  if (!sim.present[j] || !sim.isTop(j) || sim.isLocked(j)) return false;
   const ci = sim.tileCell(i);
   if (sim.occ[ci] > 1) return false; // something stays underneath
   const path = sim.tilePath(j);
@@ -66,6 +66,12 @@ function freedBy(sim: Sim, i: number, j: number): boolean {
  */
 export function moveScore(sim: Sim, m: number): number {
   if (isBowlMove(m)) return 6000;
+  const j = sim.partnerOf(m);
+  if (j >= 0 && sim.present[j]) return (singleScore(sim, m) + singleScore(sim, j)) / 2 + 40;
+  return singleScore(sim, m);
+}
+
+function singleScore(sim: Sim, m: number): number {
   const st = staticsOf(sim);
   let freeWanted = 0;
   let freeAny = 0;

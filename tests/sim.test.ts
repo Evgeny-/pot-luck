@@ -265,3 +265,68 @@ describe('state keys', () => {
     expect(c.left).toBe(2);
   });
 });
+
+describe('cloches, timers and tied tiles', () => {
+  it('a cloche hides a tile until a neighbour leaves', () => {
+    const lv = workedExample();
+    lv.tiles[0] = { id: 0, x: 1, y: 1, dir: 0, ing: T, hidden: true }; // tomato between the onion and the carrot
+    const sim = Sim.fromLevel(lv);
+    expect(sim.isCovered(0)).toBe(true);
+    expect(sim.check(0)).toBe('covered');
+    const ev: Parameters<Sim['apply']>[1] = [];
+    sim.apply(1, ev); // the onion next to it leaves
+    expect(ev.some((e) => e.t === 'uncover' && e.tile === 0)).toBe(true);
+    expect(sim.check(0)).toBe('ok');
+  });
+
+  it('a timer tile waits for enough deliveries', () => {
+    const lv = workedExample();
+    lv.tiles[2] = { ...lv.tiles[2], timer: 2 }; // the carrot opens after two deliveries
+    const sim = Sim.fromLevel(lv);
+    expect(sim.check(2)).toBe('timer');
+    expect(sim.timerLeft(2)).toBe(2);
+    sim.apply(1);
+    expect(sim.check(2)).toBe('timer');
+    const ev: Parameters<Sim['apply']>[1] = [];
+    sim.apply(0, ev);
+    expect(ev.some((e) => e.t === 'unlock' && e.tile === 2)).toBe(true);
+    sim.apply(2);
+    expect(sim.status).toBe('won');
+  });
+
+  it('tied tiles leave together, the tapped one first', () => {
+    // Soup wants onion then tomato; both tiles point up and are tied.
+    const lv: LevelDef = {
+      n: 0, w: 2, h: 1, rules: { ...BASE_RULES, bowl: 0 },
+      pots: [{ side: 0, from: 0, to: 2, dishes: [{ kind: 'soup', items: [tokenOf(O), tokenOf(T)], order: 'strict' }] }],
+      tiles: [{ id: 0, x: 0, y: 0, dir: 0, ing: T, link: 1 }, { id: 1, x: 1, y: 0, dir: 0, ing: O, link: 1 }],
+    };
+    const sim = Sim.fromLevel(lv);
+    // Tomato first would need the bowl (there is none): not allowed. Onion first works for both.
+    expect(sim.check(0)).toBe('full');
+    expect(sim.check(1)).toBe('ok');
+    expect(sim.legalMoves()).toEqual([1]);
+    const ev: Parameters<Sim['apply']>[1] = [];
+    sim.apply(1, ev);
+    expect(ev.filter((e) => e.t === 'slide').map((e) => (e as { tile: number }).tile)).toEqual([1, 0]);
+    expect(sim.status).toBe('won');
+  });
+
+  it('a tied tile can\'t go if its partner is blocked', () => {
+    const lv: LevelDef = {
+      n: 0, w: 2, h: 2, rules: { ...BASE_RULES },
+      pots: [{ side: 0, from: 0, to: 2, dishes: [{ kind: 'soup', items: [tokenOf(O), tokenOf(T), tokenOf(C)], order: 'strict' }] }],
+      tiles: [
+        { id: 0, x: 0, y: 0, dir: 0, ing: O, link: 3 },
+        { id: 1, x: 1, y: 0, dir: 0, ing: C },
+        { id: 2, x: 1, y: 1, dir: 0, ing: T, link: 3 },
+      ],
+    };
+    const sim = Sim.fromLevel(lv);
+    expect(sim.check(0)).toBe('partner'); // the tomato behind the carrot can't follow
+    expect(sim.check(1)).toBe('ok'); // the carrot parks in the bowl
+    sim.apply(1);
+    sim.apply(0); // onion, then the tomato follows; the carrot comes out of the bowl last
+    expect(sim.status).toBe('won');
+  });
+});

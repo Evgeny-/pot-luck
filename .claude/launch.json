@@ -4,7 +4,12 @@
     {
       "name": "pot-luck",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["vite", "--host", "--port", "5190"],
+      "runtimeArgs": [
+        "vite",
+        "--host",
+        "--port",
+        "5190"
+      ],
       "port": 5190
     }
   ]

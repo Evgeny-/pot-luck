@@ -1,0 +1,96 @@
+/* ================================================================== the market: art sets for tips */
+
+/* A tips amount on a little brass-and-cream chip (market balance, win dialog). */
+.tips-chip {
+  position: relative; display: inline-flex; align-items: center; gap: 5px; height: 38px; padding: 3px 14px 0 6px; border-radius: 999px;
+  background: linear-gradient(180deg, #fff8e3, #ffe9ad); box-shadow: 0 3px 0 var(--saffron-edge), 0 5px 10px rgba(120, 80, 10, 0.16), inset 0 0 0 2px rgba(255, 255, 255, 0.6);
+  font-weight: 800; font-size: 20px; line-height: 1; color: #6a4208; white-space: nowrap;
+}
+.tips-chip .emo { width: 28px; height: 28px; margin-top: -3px; }
+.tips-chip small { font-size: 13px; font-weight: 700; letter-spacing: 0.4px; opacity: 0.75; }
+.tips-chip.big { height: 46px; padding: 4px 18px 0 8px; font-size: 26px; }
+.tips-chip.big .emo { width: 34px; height: 34px; }
+.tips-chip b { font-variant-numeric: tabular-nums; }
+
+/* Win dialog: "+N tips" pops in under the stars, then counts up. */
+.tips-gain { display: flex; justify-content: center; margin: -2px 0 6px; }
+.tips-gain .tips-chip { opacity: 0; transform: scale(0.5); transition: opacity 0.2s, transform 0.4s cubic-bezier(0.2, 1.6, 0.4, 1); }
+.tips-gain.on .tips-chip { opacity: 1; transform: scale(1); }
+
+/* The dialog: wider than a recipe card on desktops, nearly full width on phones; the list scrolls. */
+.overlay.market-overlay { padding: calc(14px + var(--safe-top)) 14px calc(14px + var(--safe-bottom)); }
+.dialog.market {
+  display: flex; flex-direction: column; width: min(720px, calc(100vw - 28px));
+  max-height: calc(100vh - 56px - var(--safe-top) - var(--safe-bottom));
+  max-height: calc(100dvh - 56px - var(--safe-top) - var(--safe-bottom));
+  padding: 54px 18px 18px;
+}
+/* A striped shop awning along the top edge, under the title pill. */
+.market-awning {
+  position: absolute; left: 0; right: 0; top: 0; height: 30px; border-radius: 22px 22px 0 0; pointer-events: none;
+  background: repeating-linear-gradient(90deg, var(--tomato) 0 26px, #fff6e6 26px 52px);
+  -webkit-mask: radial-gradient(circle 13px at 13px 17px, #000 98%, transparent) 0 0 / 26px 30px repeat-x, linear-gradient(#000, #000) 0 0 / 100% 17px no-repeat;
+  mask: radial-gradient(circle 13px at 13px 17px, #000 98%, transparent) 0 0 / 26px 30px repeat-x, linear-gradient(#000, #000) 0 0 / 100% 17px no-repeat;
+  opacity: 0.9;
+}
+.market-top { position: relative; flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 12px; }
+.market-hint { font-size: 14px; font-weight: 600; line-height: 1.25; color: var(--ink-soft); }
+
+.market-list {
+  position: relative; flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap: 14px;
+  margin: 0 -8px; padding: 4px 8px 12px; scrollbar-width: thin; scrollbar-color: var(--paper-edge) transparent;
+}
+
+/* One art set. */
+.set-card {
+  position: relative; display: flex; flex-direction: column; gap: 6px; padding: 12px 14px 14px; border-radius: 16px; text-align: left;
+  background: #fff; box-shadow: 0 4px 0 var(--paper-edge), 0 8px 16px rgba(60, 35, 15, 0.1);
+}
+.set-card.in-use { box-shadow: 0 0 0 3px var(--basil), 0 5px 0 2px var(--basil-edge), 0 8px 16px rgba(60, 35, 15, 0.12); }
+.set-name { font-weight: 800; font-size: 21px; line-height: 1.1; color: var(--ink); }
+.set-blurb { font-size: 14.5px; font-weight: 600; line-height: 1.25; color: var(--ink-soft); }
+.set-tray {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 62px)); justify-content: space-around; gap: 6px; margin: 4px 0 6px; padding: 7px; border-radius: 12px;
+  background: var(--paper-2); box-shadow: inset 0 2px 0 rgba(60, 35, 15, 0.07);
+}
+.set-tray .pic {
+  display: grid; place-items: center; aspect-ratio: 1; border-radius: 10px;
+  background: radial-gradient(circle at 50% 38%, #fff, #fbf2e2); box-shadow: 0 2px 0 rgba(160, 120, 70, 0.22);
+}
+.set-tray .pic > * { width: 82%; height: 82%; }
+.set-action { display: flex; }
+.set-action .btn { width: 100%; }
+.set-action .price .emo { width: 26px; height: 26px; margin: -3px -2px 0 -4px; }
+.set-action .price .need { margin-left: 4px; font-size: 13.5px; font-weight: 700; opacity: 0.85; }
+.in-use-tag {
+  display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; min-height: 42px; padding-top: 3px; border-radius: 14px;
+  border: 2px dashed rgba(76, 179, 93, 0.55); background: rgba(76, 179, 93, 0.1); color: var(--basil-edge); font-weight: 800; font-size: 17px;
+}
+.in-use-tag .tick { width: 20px; height: 20px; margin-top: -3px; }
+
+/* Bought: the card pops with a golden glow while coins fly. */
+.set-card.bought { animation: set-bought 0.7s cubic-bezier(0.2, 1.4, 0.4, 1); }
+@keyframes set-bought {
+  0% { transform: scale(0.97); }
+  35% { transform: scale(1.035); box-shadow: 0 0 0 4px var(--saffron), 0 0 26px 8px rgba(255, 194, 61, 0.75); }
+}
+.coin-burst { position: absolute; left: 50%; bottom: 35px; width: 0; height: 0; z-index: 2; pointer-events: none; }
+.coin-burst .bit { position: absolute; left: -13px; top: -13px; width: 26px; height: 26px; filter: drop-shadow(0 2px 1px rgba(90, 54, 6, 0.3)); }
+
+.market-note {
+  position: relative; flex: none; display: flex; align-items: center; justify-content: center; gap: 6px; margin: 12px 0 2px;
+  font-size: 15px; font-weight: 700; color: var(--ink-soft);
+}
+.market-note .emo { width: 24px; height: 24px; margin-top: -3px; }
+.dialog.market .actions { flex: none; align-items: center; }
+.dialog.market .actions .btn { width: min(100%, 320px); }
+
+@media (max-width: 420px) {
+  .dialog.market { padding: 50px 12px 14px; }
+  .set-card { padding: 11px 11px 12px; }
+  .set-tray { gap: 5px; padding: 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .set-card.bought { animation: none; }
+}

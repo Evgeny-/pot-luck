@@ -122,17 +122,22 @@ export function search(plan: LevelPlan, seed: number, attempts = 24): Cand[] {
   return pool.sort((x, y) => x.dist - y.dist);
 }
 
-/** Mechanics an intro level must actually exercise. */
+/** Every planned mechanic must really be on the board; intro levels must need it. */
 function acceptable(level: LevelDef, plan: LevelPlan): boolean {
-  if (plan.tier !== 'intro') return true;
-  if (plan.mechanics.includes('bowl') || plan.mechanics.includes('skewer')) {
-    // The bowl must be needed: no solution without parking.
-    const mp = minParks(Sim.fromLevel(level), 20000);
-    if (mp.parks < (plan.mechanics.includes('skewer') ? 2 : 1)) return false;
-  }
+  const m = plan.mechanics;
+  const t = level.tiles;
+  if (m.includes('stacks') && !t.some((x) => x.z)) return false;
+  if (m.includes('links') && !t.some((x) => x.link !== undefined)) return false;
+  if (m.includes('cloche') && t.filter((x) => x.hidden).length < (plan.tier === 'intro' ? 2 : 1)) return false;
+  if (m.includes('timer') && !t.some((x) => x.timer)) return false;
   const g = geometryOf(level);
-  if (plan.mechanics.includes('pads') && level.tiles.filter((t) => tracePath(g, t.x, t.y, t.dir).turns > 0).length < 3) return false;
-  if (plan.mechanics.includes('knife') && level.tiles.filter((t) => tracePath(g, t.x, t.y, t.dir).form).length < 3) return false;
+  if (m.includes('pads') && t.filter((x) => tracePath(g, x.x, x.y, x.dir).turns > 0).length < (plan.tier === 'intro' ? 3 : 1)) return false;
+  if (m.includes('knife') && t.filter((x) => tracePath(g, x.x, x.y, x.dir).form).length < 3) return false;
+  if (plan.tier === 'intro' && (m.includes('bowl') || m.includes('jar'))) {
+    // The bowl (or jar) must be needed: no solution without it.
+    const mp = minParks(Sim.fromLevel(level), 20000);
+    if (mp.parks < (m.includes('jar') ? 2 : 1)) return false;
+  }
   return (level.solution ?? []).length > 0;
 }
 

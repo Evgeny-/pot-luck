@@ -64,6 +64,13 @@ export const VARIANTS: Variant[] = [
   v('stacks-bowl2', 'Stacks + bowl 2', 1, { pots: four(8), stacks: 6, ...rules({ bowl: 2 }) }),
   v('skewer-lids', 'Skewer 3 + lid', 2, { pots: [{ side: 0, dishes: [{ len: 7 }] }, { side: 1, dishes: [{ len: 7 }] }, { side: 2, dishes: [{ len: 7 }] }, { side: 3, dishes: [{ len: 7 }], lid: 1 }], ...rules({ bowlOrder: 'lifo' }) }),
   v('big-bowl2', '7×7 (40 tiles) + bowl 2', 0, { w: 7, h: 7, pots: four(10), ...rules({ bowl: 2 }) }),
+  // Second round: smaller bowls (the owner found bowl 3 too easy) and the new mechanics.
+  v('small1', '5×5 (20 tiles), bowl 1', 0, { w: 5, h: 5, pots: four(5), ...rules({ bowl: 1 }) }),
+  v('small2', '5×5 (20 tiles), bowl 2', 0, { w: 5, h: 5, pots: four(5), ...rules({ bowl: 2 }) }),
+  v('cloche', 'Cloches: 5 hidden tiles, bowl 2', 1, { hidden: 5, ...rules({ bowl: 2 }) }),
+  v('timer', 'Timers: 4 tiles, bowl 2', 1, { timers: 4, ...rules({ bowl: 2 }) }),
+  v('links', 'Tied pairs: 3, bowl 2', 1, { links: 3, ...rules({ bowl: 2 }) }),
+  v('jar2', 'Jar (last in, first out) with 2 spots', 1, rules({ bowlOrder: 'lifo', bowl: 2 })),
   v('salad', 'One any-order salad among 3 strict pots', 1, { pots: [{ side: 0, dishes: [{ len: 7 }] }, { side: 1, dishes: [{ len: 7 }] }, { side: 2, dishes: [{ len: 7 }] }, { side: 3, dishes: [{ len: 7, order: 'any', kind: 'salad' }] }] }),
 ];
 

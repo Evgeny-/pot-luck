@@ -4,251 +4,217 @@ This is a calm kitchen puzzle. You tap ingredient tiles, each one slides off the
 arrow points, and it lands in the pot on that side. Pots want their ingredients in recipe order.
 There is no timer, no move limit, and undo is unlimited.
 
-This document is the current state of the rules, the recommended rule set (backed by
-[EXPERIMENTS.md](EXPERIMENTS.md)), how difficulty is measured, the campaign's shape, and what is
-still open.
+This is the second version of this document, written after the owner's first playtest. The first
+version's reasoning and data are still in [PLAN.md](PLAN.md) and [EXPERIMENTS.md](EXPERIMENTS.md).
 
 <p>
-  <img src="screenshots/level-13-board.png" width="300" alt="Level 13: four pots, a 6×6 board, recipe strips with the next ingredient ringed in green">
-  <img src="screenshots/level-38.jpg" width="200" alt="Level 38: two pots cooking two dishes each, turn pads and a skewer">
-  <img src="screenshots/map-curve.jpg" width="200" alt="Level map in debug mode with the sawtooth difficulty curve">
+  <img src="screenshots/map-tour.jpg" width="190" alt="The map: a food tour, Japan above Italy, plates under cloches ahead">
+  <img src="screenshots/japan-level-12.jpg" width="190" alt="Level 12 in Japan: order tickets with plates, the bowl and the spice shelf">
+  <img src="screenshots/diner-jar-timers.jpg" width="190" alt="A diner level with kitchen timers and the jar">
+  <img src="screenshots/map-debug-curve.jpg" width="190" alt="Debug map with the difficulty curve">
 </p>
+
+## What changed after the first playtest
+
+| Feedback | Change |
+|---|---|
+| "Once the bowl appears the game feels too easy." | The bowl starts with **one spot** (levels 3–7) and grows to two at level 8. Hard levels often take a spot away again, and super hard levels have one spot (or a 2-spot jar). The curve's base is higher. The data agrees: a 3-spot bowl gives about one critical decision per level, a 1-spot bowl about four to six. |
+| "Different cuisines, so every level feels different." | Chapters of ten levels are cuisines: **Italy** (Trattoria), **Japan** (Izakaya), **Mexico** (Cantina), **USA** (Diner), **India** (Spice Market), **China** (Dim Sum House). Each has its own ingredients, dishes, background pattern, cutting-board wood, map region and music. |
+| "A hidden ingredient until you reveal its neighbours; one you can't use until N ingredients are added; linked ingredients like in Pixel Picnic." | Three new mechanics: **cloches** (hidden until a neighbouring tile leaves), **kitchen timers** (unlock after N deliveries), **tied pairs** (leave together, the tapped one first). They are measured in EXPERIMENTS.md (round 2): all add depth, and tied pairs add the most. |
+| "The kebab at the bottom of level 50 is confusing." | The skewer is now a **glass jar**: ingredients stack up inside, and only the one on top comes out. Same rule (last in, first out), but the picture explains it. |
+| "Dishes look squished, aligned differently." | Every pot is an **order ticket with a round plate**. All dish icons sit at the same size in the same plate, on every edge. |
+| "Ugly jumping animations when an ingredient is added." | Pots no longer jump. A tile slides out, hops into the plate and shrinks. The plate squashes a little, a few drops splash, and the recipe chip gets a drawn tick. A served dish gets steam, a sparkle and a red SERVED stamp. Blocked tiles nudge toward where they wanted to go. |
+| "Sounds are from Pixel Picnic." | New synthesized kitchen sounds: a wooden knock, a swish, a liquid plop, a ceramic clink, a service bell, a lid clank, a cloche "shing", a kitchen-timer ding and a twine twang. There is generative music per cuisine. |
+| "The style looks like Pixel Picnic." | A new identity, shown in full below. Icon styles are compared in `_review/style/index.html`. |
+| "The map should open step by step, but in its own way." | A **world food tour**: one region per cuisine, with its pattern and a hanging sign. Levels are plates along a dashed route. Finished plates show their dish and stars. Upcoming ones wait under a cloche. Hard levels carry one chili, super hard two. A little chef marks where you are. |
 
 ## Rules (as built)
 
-- **Tiles.** Each tile has an ingredient and an arrow.
-  - Tap a tile: if every cell of its lane up to the edge is empty, it slides off into the pot on
-    that stretch of edge.
-  - Otherwise it shakes, and the blocking tile flashes. There is no penalty.
-  - Press and hold to see the lane:
-    - green dots mean the pot will take it;
-    - amber dots mean it will go to the bowl;
-    - red dots mean it is blocked.
-- **Pots.** A pot takes the tile if it is the *next* item of its recipe; the strip highlights it.
-- **The bowl.** A tile the pot doesn't want yet drops into the **bowl** (3 spots).
-  - A bowl item flies to a pot automatically the moment some pot wants it. When two pots want it at
-    the same moment, the first one clockwise from the top gets it.
-  - With a full bowl, a wrong slide isn't allowed: the tile shakes and the bowl flashes.
-- **Walls.** Edges without a pot are walls (hatched), and no tile ever points into a wall.
-- **Win.** Every pot served, so the board and the bowl are empty (levels are zero-waste).
-- **Stuck.** No legal move. A "Kitchen jam!" dialog offers Undo or Restart. The Hint button names
-  how many undos get you back to a winnable position.
-- **Stars** reward thinking, not speed:
-  - ★★★: bowl uses at or below *par*, the fewest any solution needs (computed by the solver);
-  - ★★: within par + 2;
-  - ★: otherwise.
+- **Tiles.** Each tile has an ingredient and an arrow. Tap a tile:
+  - if its lane to the edge is clear, it slides into the pot on that stretch of edge;
+  - otherwise it nudges and stays, with no penalty.
+  - Press and hold to see the lane: green means the pot takes it, amber means it goes to the bowl,
+    red means it is blocked.
+- **Pots.** A pot takes the tile if it is the *next* item of its recipe; the ticket highlights it.
+- **The bowl.** A tile the pot doesn't want yet waits in the bowl. A bowl item flies to a pot the
+  moment some pot wants it. With a full bowl, a wrong slide isn't allowed.
+- **Win and jam.** The level is won when every dish is served. When no tile can move, it's a
+  "Kitchen jam": Undo or Restart, and Hint tells you how many moves to undo.
+- **Stars** count bowl uses against par (the fewest any solution needs): ★★★ at or below par,
+  ★★ within par + 2.
 
-When a rule was ambiguous, I picked the version that is easiest to read on screen:
+The mechanics, in the order the campaign introduces them:
 
-- **Lids.** A tile sent to a closed pot isn't blocked; it goes to the bowl like any unwanted tile.
-  The lid is a badge ("🔒 after 🍛") and the recipe stays visible under it, so nothing is hidden.
-- **Stacks.** A stack shows the tile underneath as a corner badge with its own arrow. The cell
-  stays occupied until both tiles have left.
-- **Knife bar.** The bar is a line between two rows. A tile that crosses it arrives chopped, and
-  such tiles carry a little knife badge *before* they move, so the result is never a surprise.
-- **Pads.** A tile that slides onto a turn pad continues in the pad's direction. The lane preview
-  shows the bend.
+| Level | Mechanic | Rule | On screen |
+|---|---|---|---|
+| 3 | bowl | Early ingredients wait (1 spot, 2 from level 8) | A ceramic bowl with spots |
+| 6 | salad | Any order | Every remaining chip is ringed |
+| 11 | stacks | Another tile underneath; the cell stays taken | Corner badge with the hidden tile and its arrow |
+| 16 | tied pairs | Leave together, the tapped one first, only if both can go | Twine between the two tiles; pressing shows both lanes |
+| 21 | lids | A pot opens after another pot is served | A domed plate and an "after 🍝" badge; the recipe stays visible |
+| 26 | cloche | Hidden and stuck until a neighbouring tile leaves | A silver dome that lifts off with steam |
+| 31 | jar | Last in, first out | A glass jar; the top item glows |
+| 36 | timer | Unlocks after N more deliveries | A kitchen-timer badge counting down |
+| 41 | two dishes | A pot cooks two recipes in a row | The second dish's chips are drawn smaller, after its icon |
+| 46 | turn pads | A sliding tile turns to the pad's arrow | A yellow pad; the lane preview shows the bend |
+| 51 | knife bar | Crossing it chops the ingredient | A steel bar; chopped chips carry a knife |
 
-## Recommended rule set
+## The campaign: a world food tour
 
-The baseline is:
+There are 60 levels, 10 per cuisine. Within each chapter:
 
-- **dense boards:** about 70% of the cells hold tiles;
-- **strict recipes;**
-- **router bowl with auto-delivery:** a bowl item can go to *any* pot that wants it.
+- the 5th level is **hard** (🌶);
+- the 10th is **super hard** (🌶🌶);
+- the 1st and 6th usually bring a new mechanic on a small board, which doubles as the breather
+  after a peak.
 
-Three twists sit on top of it:
+Normal levels practise the newest mechanic and mix in one or two older ones. Every level is
+generated, solver-verified, measured and stored with its solution; the tests replay all 60.
 
-| Twist | What it adds | Why it's in |
-|---|---|---|
-| **Stacks** | A cell stays blocked for two departures, and the tile underneath has its own arrow. | Cheap to learn, phone-friendly (more ingredients on a small board), and strong combined with a 2-spot bowl. |
-| **Lids** | The order in which pots finish matters. | Greedy players drop to 37%. "Free the pot that opens the lid" is a real aha. |
-| **Skewer** | Only the last item in can come out. | The deepest single rule: about 6–8 critical decisions per level against 1 for the baseline, and one sentence to explain. |
+| Chapter | Ingredients | Dishes | New |
+|---|---|---|---|
+| 1–10 Italy · Trattoria | tomato, basil, garlic, cheese, mushroom, olive, onion, eggplant | pasta, pizza, soup, salad | basics, bowl, salad, 2-spot bowl |
+| 11–20 Japan · Izakaya | rice, fish, shrimp, egg, cucumber, mushroom, carrot, eggplant | sushi, ramen, bento, onigiri, oden | stacks, tied pairs |
+| 21–30 Mexico · Cantina | corn, avocado, chili, beans, onion, garlic, lime, chicken | taco, burrito, tamale, soup | lids, cloche |
+| 31–40 USA · Diner | bread, cheese, meat, lettuce, tomato, onion, blueberries | burger, fries, hot dog, pancakes, sandwich | jar, timer |
+| 41–50 India · Spice Market | rice, chili, onion, ginger, peas, carrot, coconut | curry, flatbread, stew, wrap | two dishes, turn pads |
+| 51–60 China · Dim Sum House | shrimp, egg, mushroom, lettuce, carrot, fish, chili, eggplant | dumplings, noodles, hot pot, mooncake, fortune cookie | knife bar |
 
-Some twists stay for variety, not depth:
+Each cuisine's ingredient colours are checked so that every pair is easy to tell apart (OKLab
+readability ≥ 0.9, enforced in `tests/palette.test.ts`).
 
-- an any-order **salad** pot on relax levels;
-- pots that cook **two dishes**;
-- **turn pads** and the **knife bar**, which make lanes harder to read but don't add planning;
-- **frozen tiles**.
-
-These were rejected, with evidence in EXPERIMENTS.md:
-
-- **wild spice:** a hidden trap in zero-waste levels;
-- **hold bowl as the default:** too forgiving;
-- **split edges:** they make levels easier and harder to read;
-- **any-order everywhere:** trivial.
-
-The deepest trap needs no extra rule at all: **which copy first**. When two onions both go into the
-soup, use the one that is *blocking* something. Delivering the next ingredient is not always safe,
-and that is what keeps even the baseline interesting.
-
-## How difficulty is measured
-
-Every level is generated so that a solution exists by construction, then verified by the solver.
-Four simulated players play it 100–240 times:
-
-| Player | Plays like |
-|---|---|
-| random | taps any legal tile |
-| casual | delivers when it can, otherwise parks at random |
-| greedy | the best-looking move: deliver, otherwise park what is needed soon and frees something |
-| thinker | for each of its 4 most natural moves, imagines the next 5 moves of natural play and avoids moves that jam the kitchen within that horizon |
-
-The solver also walks the reference solution and counts **critical decisions**, the steps where
-another legal move loses.
-
-One score combines all of this:
-
-`d = 0.10·(1−random) + 0.15·(1−casual) + 0.30·(1−greedy) + 0.30·(1−thinker) + 0.15·min(1, 2·critical/decisions)`
-
-Using every player matters. A tuner that only targeted greedy learned to exploit greedy's blind
-spot: it produced levels where random tapping beat greedy. A level is also penalized when a weaker
-player wins more often than a stronger one.
-
-**Generation follows Pixel Picnic's loop:**
-
-1. A virtual cook builds the reference line, with deliberate parking detours.
-2. Tiles are placed in reverse removal order, preferring cells in the lanes of soon-to-leave tiles.
-3. A hardness knob (detours, tightness, horizon) is bisected until `d` lands on the curve.
-4. The three closest candidates are re-measured with more games.
-5. A solver-checked local search finishes the job. It moves tiles, swaps ingredients, re-aims
-   tiles, and swaps recipe items.
-6. Tier guard bands keep levels honest:
-   - intro and relax levels stay gentle;
-   - hard levels must still be fair (the thinker wins at least 30%);
-   - every normal, hard and super hard level has a minimum number of critical decisions.
-
-## The campaign: a sawtooth, not a ramp
-
-The first 50 levels are built, and all of them replay their stored solution in the tests. `d` per
-level:
+Difficulty `d` per level (52 of 60 within tolerance of the target curve):
 
 ```
   1 intro                                              0.00
-  2 intro                                              0.00
-  3 intro                                              0.00  bowl
-  4 normal    ████████                                 0.21
-  5 hard      ██████████████████                       0.46
-  6 intro     █                                        0.02  salad
-  7 normal    ███████                                  0.18
-  8 normal    ██████████                               0.24
-  9 normal    ███████████                              0.28
- 10 superhard █████████████████████████                0.63
- 11 intro     █                                        0.02  stacks
- 12 normal    █████████                                0.21
- 13 normal    ████████                                 0.20
- 14 normal    █████████                                0.22
- 15 hard      ██████████████████                       0.44
- 16 relax     ██████                                   0.14
- 17 normal    █████████                                0.23
- 18 normal    █████████                                0.24
- 19 normal    ████████████                             0.30
- 20 superhard ███████████████████████████              0.66
- 21 intro     ███                                      0.07  lids
- 22 normal    ███████████                              0.27
- 23 normal    ██████████                               0.26
- 24 normal    ██████████                               0.24
- 25 hard      ███████████████████                      0.48
- 26 intro                                              0.01  two dishes
- 27 normal    ███████████                              0.28
- 28 normal    █████████                                0.23
- 29 normal    ████████████                             0.29
- 30 superhard █████████████████████████████            0.72
- 31 intro     ████                                     0.10  skewer
+  2 intro     ████████                                 0.20
+  3 intro     ██████                                   0.14  bowl
+  4 normal    █████████                                0.23
+  5 hard      █████████████████████                    0.53
+  6 intro     ███                                      0.07  salad
+  7 normal    ███████████                              0.28
+  8 normal    ██████████                               0.26  2-spot bowl
+  9 normal    ██████████████                           0.35
+ 10 superhard █████████████████████████████            0.73
+ 11 intro     █                                        0.01  stacks
+ 12 normal    ███████████                              0.28
+ 13 normal    ██████████                               0.26
+ 14 normal    █████████████                            0.34
+ 15 hard      ███████████████████████                  0.58
+ 16 intro     ██                                       0.04  tied pairs
+ 17 normal    ███████████████                          0.37
+ 18 normal    ███████████                              0.29
+ 19 normal    ██████████████                           0.34
+ 20 superhard ███████████████████████                  0.59
+ 21 intro     ██                                       0.05  lids
+ 22 normal    ████████████                             0.30
+ 23 normal    ███████████                              0.28
+ 24 normal    ██████████████                           0.36
+ 25 hard      ███████████████████████                  0.58
+ 26 intro     ████                                     0.09  cloche
+ 27 normal    ██████████████                           0.35
+ 28 normal    ████████████                             0.31
+ 29 normal    ███████████████                          0.36
+ 30 superhard ██████████████████████████               0.65
+ 31 intro     █                                        0.03  jar
  32 normal    ████████████                             0.30
- 33 normal    ██████████                               0.26
- 34 normal    ██████████████                           0.34
- 35 hard      ████████████████████                     0.51
- 36 intro                                              0.00  turn pads
- 37 normal    ████████████                             0.31
- 38 normal    ████████████                             0.31
- 39 normal    █████████████                            0.34
- 40 superhard █████████████████████████████████        0.82
- 41 intro     █████                                    0.11  knife bar
- 42 normal    ██████████████                           0.35
- 43 normal    ███████████                              0.28
- 44 normal    █████████████                            0.33
- 45 hard      ███████████████████████                  0.58
- 46 intro                                              0.00  frozen tiles
- 47 normal    ██████████████                           0.35
- 48 normal    ████████████                             0.30
- 49 normal    ███████████████                          0.38
- 50 superhard ██████████████████████████               0.66
+ 33 normal    ████████████                             0.31
+ 34 normal    ████████████████                         0.41
+ 35 hard      ████████████████████████                 0.61
+ 36 intro     ████                                     0.11  timer
+ 37 normal    ███████████████                          0.38
+ 38 normal    ████████████████                         0.39
+ 39 normal    ████████████████                         0.40
+ 40 superhard ███████████████████████████████          0.77
+ 41 intro     ███                                      0.07  two dishes
+ 42 normal    ███████████████                          0.37
+ 43 normal    ███████████████                          0.37
+ 44 normal    ██████████████████                       0.44
+ 45 hard      ███████████████████████                  0.57
+ 46 intro     █████                                    0.12  turn pads
+ 47 normal    █████████████████                        0.44
+ 48 normal    ████████████████                         0.41
+ 49 normal    ████████████████                         0.41
+ 50 superhard █████████████████████████████            0.73
+ 51 intro     ███                                      0.07  knife bar
+ 52 normal    ███████████████                          0.38
+ 53 normal    ██████████████                           0.34
+ 54 normal    ███████████████████                      0.47
+ 55 hard      ████████████████████████████             0.70
+ 56 normal    █████████████████                        0.43
+ 57 normal    ██████████████████                       0.45
+ 58 normal    ███████████████████                      0.47
+ 59 normal    ███████████████████                      0.48
+ 60 superhard █████████████████████████████            0.72
 ```
 
-**How a block of ten is shaped:**
+Compared with the first version, normal levels moved from 0.2–0.38 to 0.23–0.48. Greedy players
+now win 43–94% of normal levels, against 80–100% before.
 
-- The first level is an intro or a breather: a new mechanic on a small 5×5 board, where the
-  mechanic is the whole point.
-- Next come three normal levels with small ups and downs.
-- The 5th level is **hard**.
-- The 6th is a breather.
-- Then three more normal levels, each a notch higher.
-- The 10th is **super hard**.
+### How difficulty is measured
 
-The base slowly rises from 0.20 to 0.38 by level 60. Levels after an intro practise the new
-mechanic; later ones mix two (three on super hard levels).
+Each level is played 100–240 times by four simulated players:
 
-**Variety comes from shape as well as difficulty.** Levels alternate:
+- random taps;
+- a casual player who delivers when it can;
+- a greedy player who makes the best-looking move;
+- a thinker who looks five natural moves ahead.
 
-- 5×5 to 7×7 boards;
-- four, three or two pots;
-- *rush* boards (big, loose, a 4-spot bowl) and *gridlocks* (dense, a 2-spot bowl or a skewer).
+The solver walks the solution and counts critical decisions, the steps where another move loses.
 
-| Tier | Typical numbers |
-|---|---|
-| Normal | Greedy wins 80–100%, the thinker 100%, 1–6 critical decisions. Thinking a little is enough. |
-| Hard | Greedy 12–57%, the thinker 65–100%, 3–6 critical decisions. You have to look ahead. |
-| Super hard | Greedy 28–41%, the thinker 25–60%, 6–27 critical decisions. Deep traps. |
+`d = 0.10·(1−random) + 0.15·(1−casual) + 0.30·(1−greedy) + 0.30·(1−thinker) + 0.15·min(1, 2·critical/decisions)`
 
-## Ladder to level 100 (proposal)
+The generator bisects a hardness knob until `d` lands on the curve, then a solver-checked local
+search finishes. Tier guard bands keep intros gentle and peaks deep but fair. Levels where a weaker
+player beats a stronger one are rejected, because they only exploit one heuristic.
 
-| Levels | New | Notes |
-|---|---|---|
-| 1–3 | one pot, two pots, the bowl | Tiny boards. The bowl level can't be won without parking. |
-| 6 | salad (any order) | A relief pot, used on relax levels from then on. |
-| 11 | stacks | Then practised at 12–19. |
-| 21 | lids | |
-| 26 | two dishes | Also used to keep recipes short on two-pot boards. |
-| 31 | skewer | The skewer becomes the usual "boss bowl" on hard levels. |
-| 36 | turn pads | Reading challenge. |
-| 41 | knife bar | Two pots, up/down lanes. Reading challenge. |
-| 46 | frozen tiles | |
-| 51–60 | (no new rule) | 2-spot bowls on normal levels, more 7×7 boards, lids + skewer combos. |
-| 61 | hot bar (cooked) | A reskin of the knife: "cooked carrot". Recipes can ask for chopped *and* cooked. |
-| 71 | long tiles (leek, baguette) | Not implemented yet. They block two cells and their lane starts at the head. |
-| 81 | sticky dough | Not implemented yet. It slides *until* blocked, so the board changes: the most complex rule, kept for late. |
-| 91–100 | chef's table | Combinations only, on the biggest boards. |
+## Look and sound
 
-## Open questions for the owner
+The goal was a look of its own, so that Pot Luck and Pixel Picnic feel like siblings, not twins.
 
-1. **Router or hold bowl.**
-   - The router bowl (any bowl item can go to any pot) is deeper, but arrows can "lie": an onion
-     pointing at the soup may really be for the stew, at the cost of a bowl spot.
-   - A hold bowl keeps arrows truthful and is much easier.
-   - Worth a playtest of each.
-2. **Auto or tap delivery from the bowl.** Auto (current) needs a tie rule (clockwise). Tapping
-   gives control but adds taps. The difficulty is the same.
-3. **Star rule.** Bowl uses against par rewards perfect play. The alternative is stars for no
-   hint/undo. With par, three stars can be quite hard on gridlock levels (par 5–10).
-4. **Board size on phones.** 7×7 boards give about 42 px cells at 375 px width. Fine on a desk;
-   worth checking on a real phone with real thumbs.
-5. **Turn pads and the knife bar.** They add reading difficulty, which the metrics can't see. Keep
-   them for variety, or drop them?
-6. **Art direction.** See `_review/art/index.html`: Fluent emoji (current), pixelated emoji, local
-   Z-Image Turbo, and pixelated Z-Image. Generated art reads well thanks to its black outlines.
-   White ingredients (egg, garlic) need a coloured backdrop in the prompt.
-7. **Calibration.** `d` and its weights are educated guesses. A playtest that logs time per level
-   and undo counts would let us fit them to real players.
+- **Palette:** warm kitchen colours (espresso ink, tomato red, basil green, saffron, teal) instead
+  of Pixel Picnic's purple and yellow.
+- **Type:** Baloo 2 (OFL), not Nunito.
+- **Tiles:** enamel, each in its ingredient's colour with a white glaze rim and a cream arrow
+  badge.
+- **Pots:** order tickets with a plate.
+- **The bowl:** a ceramic bowl; the jar is glass with a red lid.
+- **Boosters:** spice jars on a wooden shelf, instead of the purple dock.
+- **Dialogs:** recipe cards with a ruled paper texture, a red margin line and a tape-like title.
+- **Backgrounds** change per cuisine: red gingham, indigo waves, talavera tiles, diner checks,
+  block-print rosettes and a lattice. The board's wood changes with them.
+- **Map:** the world food tour described above.
+- **Sound:** synthesized kitchen sounds and generative music per cuisine (Italian mandolin
+  tremolo, koto on a Japanese scale, marimba, a diner jukebox, a tanpura drone with sitar plucks,
+  guzheng glissandi).
+
+**Icon styles.** The prototype still uses Fluent emoji. `_review/style/index.html` puts five
+ingredients on the game's tiles in six generated styles (sticker, kawaii, clay, watercolor, retro
+diner, ceramic tile) and five emoji sets. Kawaii and clay give the ingredients faces and
+personality, which no Pixel Picnic asset has. In development, `?icons=kawaii` (or `sticker`,
+`clay`, `watercolor`, `retro`, `ceramic`) swaps the five generated ingredients into the game itself,
+for example on level 7 in Italy:
+
+<img src="screenshots/kawaii-preview.jpg" width="260" alt="Level 7 with kawaii tomatoes, cheese and mushrooms">
+
+## Open questions
+
+1. **Icon direction.** See the style page. My pick is kawaii or sticker for ingredients, with the
+   same style for dish icons. A full set is about 40 ingredients and dishes, roughly 40 minutes of
+   local generation.
+2. **Is the curve right?** Normal levels are now noticeably harder. The first chapter should be
+   playtested for frustration, especially levels 4–7 with a single bowl spot.
+3. **Router or hold bowl** (from v1): arrows can still "lie" (a tile pointing at a pot that doesn't
+   need it). Worth a playtest.
+4. **Stars:** par-based stars are demanding on gridlock levels.
+5. **Music:** each cuisine has its own loop. Is it too much? There is a toggle in Settings.
 
 ## Not done yet
 
 - three.js rendering;
 - night mode;
 - Russian strings;
-- shop and coins;
 - endless mode;
-- a worker for the hint (it currently solves on the main thread, about 50–300 ms);
+- a hint worker (the hint solves on the main thread, 50–300 ms);
 - long tiles and sticky dough;
-- a hot bar on its own.
+- generated art in the game itself (only on the review page).

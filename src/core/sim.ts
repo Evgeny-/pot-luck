@@ -11,6 +11,9 @@ import { WILD, tokenOf, type LevelDef, type Rules, type Token } from './types';
  * - Bowl items go to pots that want them: automatically, or on a tap ('router' + 'tap'). In 'hold'
  *   mode an item only ever goes to the pot it slid into. A 'lifo' bowl only releases its last item.
  * - A pot with a lid takes nothing until the pot named by the lid has served all its dishes.
+ * - Ice and cloches hold a tile (a cloche also hides it) until a tile in a neighbouring cell has
+ *   left; a timer holds it until that many ingredients have gone into pots.
+ * - Tied tiles leave together: the tapped one first, then its partner, and only if both can go.
  * - Won when every pot has served everything. Stuck when no move is legal.
  */
 
@@ -22,17 +25,19 @@ export const bowlMoveSlot = (m: number): number => (m - BOWL_MOVE) >> 4;
 export const bowlMovePot = (m: number): number => (m - BOWL_MOVE) & 15;
 
 export type SimEvent =
-  | { t: 'slide'; tile: number; cells: number[]; pot: number; into: 'pot' | 'bowl'; token: Token; item: number; slot: number }
+  | { t: 'slide'; tile: number; cells: number[]; pot: number; into: 'pot' | 'bowl'; token: Token; item: number; slot: number; partner?: boolean }
   | { t: 'bowlOut'; slot: number; pot: number; token: Token; item: number }
   | { t: 'dish'; pot: number; dish: number; last: boolean }
   | { t: 'lid'; pot: number }
   | { t: 'reveal'; tile: number }
   | { t: 'thaw'; tile: number }
+  | { t: 'uncover'; tile: number }
+  | { t: 'unlock'; tile: number }
   | { t: 'won' }
   | { t: 'stuck' };
 
 export type SimStatus = 'playing' | 'won' | 'stuck';
-export type TapCheck = 'ok' | 'gone' | 'under' | 'frozen' | 'blocked' | 'wall' | 'full';
+export type TapCheck = 'ok' | 'gone' | 'under' | 'frozen' | 'covered' | 'timer' | 'blocked' | 'wall' | 'full' | 'partner';
 
 const ORDER_STRICT = 0;
 const ORDER_ANY = 1;
@@ -68,7 +73,14 @@ interface Shared {
   T: number;
   cell: Int16Array;
   z: Uint8Array;
-  frozen: Uint8Array;
+  /** 1: frozen (ice), 2: under a cloche — both wait for a neighbouring tile to leave. */
+  wait: Uint8Array;
+  /** Deliveries needed before the tile unlocks (0: none). */
+  timer: Int16Array;
+  /** Tied partner tile, or -1. */
+  partner: Int16Array;
+  /** Tiles with a timer, for unlock events. */
+  timed: number[];
   ing: Uint8Array;
   /** What each tile becomes on its way (form from bars), and where it lands (-1: wall). */
   token: Int16Array;
@@ -132,7 +144,9 @@ export class Sim {
     const T = level.tiles.length;
     const cell = new Int16Array(T);
     const z = new Uint8Array(T);
-    const frozen = new Uint8Array(T);
+    const wait = new Uint8Array(T);
+    const timer = new Int16Array(T);
+    const partner = new Int16Array(T).fill(-1);
     const ing = new Uint8Array(T);
     const token = new Int16Array(T);
     const pot = new Int8Array(T);
@@ -141,7 +155,8 @@ export class Sim {
       if (t.id !== i) throw new Error(`tile ids must be 0..n-1 in order (tile ${i} has id ${t.id})`);
       cell[i] = t.y * w + t.x;
       z[i] = t.z ?? 0;
-      frozen[i] = t.frozen ? 1 : 0;
+      wait[i] = t.hidden ? 2 : t.frozen ? 1 : 0;
+      timer[i] = t.timer ?? 0;
       ing[i] = t.ing;
       const p = tracePath(g, t.x, t.y, t.dir);
       path.push(Int16Array.from(p.cells));
@@ -151,6 +166,15 @@ export class Sim {
     });
     const byCell = new Map<number, number[]>();
     for (let i = 0; i < T; i++) byCell.set(cell[i], [...(byCell.get(cell[i]) ?? []), i]);
+    const links = new Map<number, number[]>();
+    level.tiles.forEach((t, i) => { if (t.link !== undefined) links.set(t.link, [...(links.get(t.link) ?? []), i]); });
+    for (const pair of links.values()) {
+      if (pair.length !== 2) throw new Error('a link ties exactly two tiles');
+      partner[pair[0]] = pair[1];
+      partner[pair[1]] = pair[0];
+    }
+    const timed: number[] = [];
+    for (let i = 0; i < T; i++) if (timer[i] > 0) timed.push(i);
     const above: Int16Array[] = [];
     const below = new Int16Array(T).fill(-1);
     const nbr: Int16Array[] = [];
@@ -199,7 +223,7 @@ export class Sim {
     pots.forEach((p, i) => { if (p.lid >= 0) opens[p.lid].push(i); });
 
     const sim = new Sim({
-      level, g, rules: level.rules, w, h, T, cell, z, frozen, ing, token, pot, path, above, below, nbr,
+      level, g, rules: level.rules, w, h, T, cell, z, wait, timer, partner, timed, ing, token, pot, path, above, below, nbr,
       zobA, zobB, pots, opens, totalItems,
     });
     sim.present = new Uint8Array(T).fill(1);
@@ -321,6 +345,7 @@ export class Sim {
     const dish = pot.dishes[d];
     const got = this.potGot[p] | (1 << item);
     this.delivered++;
+    if (ev) for (const t of this.s.timed) if (this.s.timer[t] === this.delivered && this.present[t]) ev.push({ t: 'unlock', tile: t });
     if (got === dish.full) {
       this.potDish[p] = d + 1;
       this.potGot[p] = 0;
@@ -340,11 +365,35 @@ export class Sim {
     return true;
   }
 
-  isFrozen(i: number): boolean {
-    if (!this.s.frozen[i]) return false;
+  /** Still waiting for a neighbour to leave (ice or cloche). */
+  private waiting(i: number): boolean {
+    if (!this.s.wait[i]) return false;
     const nb = this.s.nbr[i];
     for (let k = 0; k < nb.length; k++) if (!this.present[nb[k]]) return false;
     return true;
+  }
+
+  isFrozen(i: number): boolean {
+    return this.s.wait[i] === 1 && this.waiting(i);
+  }
+
+  /** Under a cloche: hidden, and can't be tapped yet. */
+  isCovered(i: number): boolean {
+    return this.s.wait[i] === 2 && this.waiting(i);
+  }
+
+  /** Deliveries still needed before a timer tile unlocks (0 when free). */
+  timerLeft(i: number): number {
+    return Math.max(0, this.s.timer[i] - this.delivered);
+  }
+
+  /** Can't be tapped for now: ice, cloche or timer. */
+  isLocked(i: number): boolean {
+    return this.waiting(i) || this.s.timer[i] > this.delivered;
+  }
+
+  partnerOf(i: number): number {
+    return this.s.partner[i];
   }
 
   /** First cell of tile i's lane that is occupied, or -1 if the lane is clear. */
@@ -373,17 +422,30 @@ export class Sim {
   tileCell(i: number): number { return this.s.cell[i]; }
   tilePath(i: number): Int16Array { return this.s.path[i]; }
 
-  /** What happens if tile i is tapped now. */
-  check(i: number): TapCheck {
+  /** What happens if tile i is tapped now (ignoring its tied partner). */
+  private checkOne(i: number): TapCheck {
     if (this.status !== 'playing') return 'gone';
     if (!this.present[i]) return 'gone';
     if (!this.isTop(i)) return 'under';
+    if (this.isCovered(i)) return 'covered';
     if (this.isFrozen(i)) return 'frozen';
+    if (this.s.timer[i] > this.delivered) return 'timer';
     if (this.blockedAt(i) >= 0) return 'blocked';
     const p = this.s.pot[i];
     if (p < 0) return 'wall';
     if (this.acceptIndex(p, this.s.token[i]) >= 0) return 'ok';
     return this.bowlLen < this.bowlTok.length ? 'ok' : 'full';
+  }
+
+  /** What happens if tile i is tapped now; a tied tile also needs its partner to be able to follow. */
+  check(i: number): TapCheck {
+    const c = this.checkOne(i);
+    if (c !== 'ok') return c;
+    const j = this.s.partner[i];
+    if (j < 0 || !this.present[j]) return 'ok';
+    const trial = this.clone();
+    trial.tapOne(i);
+    return trial.checkOne(j) === 'ok' ? 'ok' : 'partner';
   }
 
   /** Would tile i (with a clear lane) land in its pot (true) or in the bowl (false)? */
@@ -401,11 +463,13 @@ export class Sim {
     const room = this.bowlLen < this.bowlTok.length;
     for (let i = 0; i < s.T; i++) {
       if (!this.present[i]) continue;
-      if (!this.isTop(i) || this.isFrozen(i)) continue;
+      if (!this.isTop(i) || this.isLocked(i)) continue;
       const p = s.pot[i];
       if (p < 0) continue;
       if (this.blockedAt(i) >= 0) continue;
-      if (room || this.acceptIndex(p, s.token[i]) >= 0) out.push(i);
+      if (!room && this.acceptIndex(p, s.token[i]) < 0) continue;
+      if (s.partner[i] >= 0 && this.present[s.partner[i]] && this.check(i) !== 'ok') continue;
+      out.push(i);
     }
     if (s.rules.bowlDelivery === 'tap' && s.rules.bowlMode === 'router' && this.bowlLen) {
       const lifo = s.rules.bowlOrder === 'lifo';
@@ -431,6 +495,16 @@ export class Sim {
   private tap(i: number, ev?: SimEvent[]): boolean {
     const s = this.s;
     if (i < 0 || i >= s.T || this.check(i) !== 'ok') return false;
+    this.tapOne(i, ev);
+    const j = s.partner[i];
+    if (j >= 0 && this.present[j]) this.tapOne(j, ev, true);
+    this.checkWon(ev);
+    return true;
+  }
+
+  /** One tile leaves (its checks already passed). */
+  private tapOne(i: number, ev?: SimEvent[], partner = false): void {
+    const s = this.s;
     const p = s.pot[i];
     const tok = s.token[i];
     const item = this.acceptIndex(p, tok);
@@ -442,28 +516,27 @@ export class Sim {
     this.hashB ^= s.zobB[i];
     this.taps++;
     let slot = -1;
+    const mark = partner || undefined;
     if (item >= 0) {
-      ev?.push({ t: 'slide', tile: i, cells: Array.from(s.path[i]), pot: p, into: 'pot', token: tok, item, slot: -1 });
+      ev?.push({ t: 'slide', tile: i, cells: Array.from(s.path[i]), pot: p, into: 'pot', token: tok, item, slot: -1, partner: mark });
       this.deliver(p, item, ev);
     } else {
       slot = this.bowlPut(tok, p);
       this.parks++;
-      ev?.push({ t: 'slide', tile: i, cells: Array.from(s.path[i]), pot: p, into: 'bowl', token: tok, item: -1, slot });
+      ev?.push({ t: 'slide', tile: i, cells: Array.from(s.path[i]), pot: p, into: 'bowl', token: tok, item: -1, slot, partner: mark });
     }
     if (ev) {
       const b = s.below[i];
       if (b >= 0 && this.present[b]) ev.push({ t: 'reveal', tile: b });
-      // Neighbours that were frozen until now.
+      // Neighbours that were frozen or under a cloche until now.
       for (const j of s.nbr[i]) {
-        if (!s.frozen[j] || !this.present[j]) continue;
+        if (!s.wait[j] || !this.present[j]) continue;
         let others = false;
         for (const k of s.nbr[j]) if (k !== i && !this.present[k]) others = true;
-        if (!others) ev.push({ t: 'thaw', tile: j });
+        if (!others) ev.push(s.wait[j] === 2 ? { t: 'uncover', tile: j } : { t: 'thaw', tile: j });
       }
     }
     this.autoBowl(ev);
-    this.checkWon(ev);
-    return true;
   }
 
   private bowlPut(tok: Token, pot: number): number {

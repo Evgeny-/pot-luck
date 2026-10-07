@@ -41,6 +41,12 @@ export interface GenParams {
   tight: number;
   stacks?: number;
   frozen?: number;
+  /** Tiles under a cloche (hidden until a neighbour leaves). */
+  hidden?: number;
+  /** Tiles locked until a number of ingredients has gone into pots. */
+  timers?: number;
+  /** Pairs of tied tiles. */
+  links?: number;
   wild?: number;
   pads?: number;
   bars?: BarDef[];
@@ -333,13 +339,15 @@ function assemble(p: GenParams, pots: PotDef[], pads: PadDef[], plan: { events: 
     if (pl.z) t.z = pl.z;
     return t;
   });
-  // Frozen tiles: thawed in the reference line by a neighbour that leaves shortly before them.
-  if (p.frozen) {
-    const time = new Int16Array(placed.length);
-    plan.events.forEach((_, e) => (time[idOf[e]] = e));
+  const time = new Int16Array(placed.length);
+  plan.events.forEach((_, e) => (time[idOf[e]] = e));
+  const stacked = (t: TileDef) => tiles.some((o) => o !== t && o.x === t.x && o.y === t.y);
+  // Ice and cloches: released in the reference line by a neighbour that leaves shortly before.
+  const waiting = (count: number, mark: (t: TileDef) => void) => {
+    if (!count) return;
     const cand: { id: number; gap: number }[] = [];
     for (const t of tiles) {
-      if (t.z) continue;
+      if (t.z || t.frozen || t.hidden || stacked(t)) continue;
       let first = Infinity;
       for (const o of tiles) {
         if (Math.abs(o.x - t.x) + Math.abs(o.y - t.y) !== 1) continue;
@@ -349,9 +357,54 @@ function assemble(p: GenParams, pots: PotDef[], pads: PadDef[], plan: { events: 
     }
     rng.shuffle(cand);
     cand.sort((a, b) => a.gap - b.gap);
-    for (const c of cand.slice(0, p.frozen)) tiles[c.id].frozen = true;
+    for (const c of cand.slice(0, count)) mark(tiles[c.id]);
+  };
+  waiting(p.frozen ?? 0, (t) => (t.frozen = true));
+  waiting(p.hidden ?? 0, (t) => (t.hidden = true));
+  // Tied pairs: neighbours that leave one right after the other in the reference line.
+  let steps = plan.steps.slice();
+  if (p.links) {
+    const cand: number[] = [];
+    for (let k = 0; k + 1 < steps.length; k++) {
+      const a = steps[k];
+      const b = steps[k + 1];
+      if (!('tile' in a) || !('tile' in b)) continue;
+      const ta = tiles[idOf[a.tile]];
+      const tb = tiles[idOf[b.tile]];
+      if (Math.abs(ta.x - tb.x) + Math.abs(ta.y - tb.y) !== 1) continue;
+      if (stacked(ta) || stacked(tb) || ta.frozen || tb.frozen || ta.hidden || tb.hidden) continue;
+      cand.push(k);
+    }
+    rng.shuffle(cand);
+    const used = new Set<number>();
+    let id = 0;
+    const drop = new Set<number>();
+    for (const k of cand) {
+      if (id >= p.links || used.has(k) || used.has(k + 1) || used.has(k - 1)) continue;
+      const a = tiles[idOf[(steps[k] as { tile: number }).tile]];
+      const b = tiles[idOf[(steps[k + 1] as { tile: number }).tile]];
+      a.link = id;
+      b.link = id;
+      id++;
+      used.add(k).add(k + 1);
+      drop.add(k + 1);
+    }
+    steps = steps.filter((_, k) => !drop.has(k));
   }
-  const solution = plan.steps.map((s) => ('tile' in s ? idOf[s.tile] : bowlMove(s.slot, s.pot)));
+  let solution = steps.map((st) => ('tile' in st ? idOf[st.tile] : bowlMove(st.slot, st.pot)));
+  // Timers: a tile unlocks a little before the reference line needs it.
+  if (p.timers) {
+    const probe = Sim.fromLevel({ n: 0, w: p.w, h: p.h, tiles, pots, rules: { ...p.rules }, pads, bars: p.bars });
+    const before = new Map<number, number>();
+    for (const m of solution) {
+      if (m < 1024) before.set(m, probe.delivered);
+      if (!probe.apply(m)) return null;
+    }
+    const cand = tiles.filter((t) => (before.get(t.id) ?? 0) >= 3 && !t.link && !t.hidden && !t.frozen && !stacked(t));
+    rng.shuffle(cand);
+    for (const t of cand.slice(0, p.timers)) t.timer = Math.max(2, (before.get(t.id) ?? 0) - rng.int(0, 2));
+  }
+  solution = steps.map((st) => ('tile' in st ? idOf[st.tile] : bowlMove(st.slot, st.pot)));
   const level: LevelDef = { n: 0, w: p.w, h: p.h, tiles, pots, rules: { ...p.rules }, solution };
   if (pads.length) level.pads = pads;
   if (p.bars?.length) level.bars = p.bars.map((b) => ({ ...b }));

@@ -1,14 +1,25 @@
 # 🍲 Pot Luck
 
-A cozy kitchen puzzle. Tap an ingredient and it slides off the board the way its arrow points,
-straight into the pot on that side, if nothing is in its way. Every pot wants its recipe **in
-order**. An ingredient that arrives too early waits in a tiny side bowl, and the bowl has only
-three spots. Think ahead, or the kitchen jams.
+A cozy kitchen puzzle and a food tour around the world. Tap an ingredient and it slides off the
+board the way its arrow points, straight into the pot on that side, if nothing is in its way.
+Every pot wants its recipe **in order**. An ingredient that arrives too early waits in a tiny side
+bowl, and the bowl starts with a single spot. Think ahead, or the kitchen jams.
 
 - No timer, no move limit, unlimited undo
-- 50 levels with a hard peak every 5th level, a super hard one every 10th, and breathers in between
-- New ideas along the way: the salad bowl, stacked tiles, lids, two-dish pots, the skewer, turn
-  pads, the knife bar and frozen tiles
+- 60 levels in six kitchens: Italy, Japan, Mexico, a US diner, India and China, each with its own
+  ingredients, dishes, look and music
+- Spicy levels 🌶 every 5th and extra spicy 🌶🌶 every 10th, with breathers in between
+- New ideas along the way:
+  - the salad bowl;
+  - stacked tiles;
+  - ingredients tied with twine;
+  - lids;
+  - cloches;
+  - the jar;
+  - kitchen timers;
+  - two-dish pots;
+  - turn pads;
+  - the knife bar.
 - Three stars for a perfect cook: use the bowl as rarely as possible
 
 ## Development
@@ -31,7 +42,7 @@ URL flags:
 Content and experiments (they use [Bun](https://bun.sh)):
 
 ```bash
-bun scripts/build-levels.ts 1-50          # generate levels → .cache/levels (skips finished ones)
+bun scripts/build-levels.ts 1-60          # generate levels → .cache/levels (skips finished ones)
 bun scripts/build-levels.ts merge         # → src/data/levels.json
 bun scripts/build-levels.ts report        # the difficulty curve as text
 bun scripts/experiment.ts                 # rule experiments (PART=k/8 to run in parallel)
@@ -48,6 +59,10 @@ uv run --no-project --with mflux python scripts/art/generate.py .cache/art/jobs.
 bun scripts/art/render-emoji.ts
 uv run --no-project --with pillow --with numpy python scripts/art/tiles.py
 bun scripts/art/review.ts                 # → _review/art/index.html
+python3 scripts/art/styles.py > .cache/art/styles.jsonl   # six candidate icon styles (30 images)
+uv run --no-project --with mflux python scripts/art/generate.py .cache/art/styles.jsonl .cache/art/styles
+uv run --no-project --with pillow --with numpy python scripts/art/styles-tiles.py
+bun scripts/art/styles-review.ts          # → _review/style/index.html
 ```
 
 More documentation in `docs/`:
@@ -57,5 +72,5 @@ More documentation in `docs/`:
 - [docs/DESIGN.md](docs/DESIGN.md): the rules, how difficulty is measured, the campaign curve and
   the open questions.
 
-<sub>Icons: [Fluent Emoji](https://github.com/microsoft/fluentui-emoji) (MIT). Font: [Nunito](https://fonts.google.com/specimen/Nunito) (OFL 1.1).
+<sub>Icons: [Fluent Emoji](https://github.com/microsoft/fluentui-emoji) (MIT). Font: [Baloo 2](https://fonts.google.com/specimen/Baloo+2) (OFL 1.1).
 Sound is synthesized with the Web Audio API.</sub>

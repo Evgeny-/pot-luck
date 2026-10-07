@@ -116,6 +116,29 @@ player must learn.
    wild spice. Its "natural" search uses the same strong heuristic as greedy, so it rarely
    backtracks. The campaign uses win rates and critical decisions instead.
 
+## Round 2: smaller bowls and three new mechanics
+
+After the first playtest the owner felt the game was too easy once the bowl appeared. That matches
+the data: a 3-spot bowl gives about one critical decision per level. Round 2 measured smaller
+bowls on small boards and three new mechanics, all with a 2-spot bowl (40 levels each). For
+reference, the 6×6 baseline with a 2-spot bowl measures greedy 61%, thinker 91%, critical 2.2.
+
+| Variant | Random | Casual | Greedy | Thinker | Critical | Trap density | 1st-move traps |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 5×5 (20 tiles), bowl 1 | 23% | 26% | 59% | 89% | 3.8 | 0.040 | 10% |
+| 5×5 (20 tiles), bowl 2 | 32% | 36% | 77% | 90% | 1.2 | 0.016 | 1% |
+| **Cloche**: 5 hidden tiles, lifted when a neighbour leaves | 7% | 9% | 51% | 84% | 2.1 | 0.021 | 3% |
+| **Timer**: 4 tiles unlock after N deliveries | 8% | 10% | 59% | 90% | 2.8 | 0.024 | 1% |
+| **Tied pairs**: 3 pairs, the tapped tile goes first | 8% | 11% | 47% | 88% | 2.6 | 0.027 | 1% |
+| **Jar** (the skewer, redrawn) with 2 spots | 5% | 11% | 68% | 90% | 6.4 | 0.050 | 1% |
+
+- **A 1-spot bowl suits the first levels.** Small boards with one spot ask for real decisions
+  (3.8 critical, 10% first-move traps) while staying fair (the thinker wins 89%). The campaign now
+  starts there and grows the bowl to two at level 8.
+- **All three new mechanics add depth.** Tied pairs cut the greedy player's wins most (to 47%):
+  the tap order matters, and both lanes must be clear. Cloches (51%) add a little uncertainty.
+  Timers (59%) are the gentlest, mostly a pacing device.
+
 ## Recommended rule set
 
 - **Baseline:**

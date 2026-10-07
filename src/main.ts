@@ -1,4 +1,4 @@
-import '@fontsource-variable/nunito';
+import '@fontsource-variable/baloo-2';
 import './ui/ui.css';
 import { App } from './app/App';
 

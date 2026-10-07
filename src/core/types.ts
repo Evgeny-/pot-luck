@@ -30,6 +30,12 @@ export interface TileDef {
   z?: number;
   /** Frozen until a tile in a neighbouring cell has left. */
   frozen?: boolean;
+  /** Under a cloche: hidden and stuck until a tile in a neighbouring cell has left. */
+  hidden?: boolean;
+  /** Locked until this many ingredients have gone into pots (in total). */
+  timer?: number;
+  /** Tied to the other tile with the same link id: tapping either sends both, the tapped one first. */
+  link?: number;
 }
 
 /** strict: in recipe order. any: in any order. base: the first `base` items in order, then any. */
@@ -114,6 +120,10 @@ export interface LevelStats {
 
 export interface LevelDef {
   n: number;
+  /** Cuisine (chapter theme): ingredients, dishes, background and music. */
+  cuisine?: string;
+  /** Display name, e.g. a menu title. */
+  name?: string;
   w: number;
   h: number;
   tiles: TileDef[];

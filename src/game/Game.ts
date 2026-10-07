@@ -56,10 +56,13 @@ export class Game {
 
   private press(id: number): void {
     const c = this.sim.check(id);
-    if (c === 'ok') this.view.showLane(id, this.sim.wouldDeliver(id) ? 'ok' : 'bowl');
-    else if (c === 'full') this.view.showLane(id, 'bowl');
-    else if (c === 'blocked') this.view.showLane(id, 'blocked', this.sim.blockedAt(id));
-    audio.play('tap', { volume: 0.5 });
+    const partner = this.sim.partnerOf(id);
+    const mate = partner >= 0 && this.sim.present[partner] ? partner : -1;
+    if (c === 'ok') this.view.showLane(id, this.sim.wouldDeliver(id) ? 'ok' : 'bowl', -1, mate);
+    else if (c === 'full') this.view.showLane(id, 'bowl', -1, mate);
+    else if (c === 'blocked') this.view.showLane(id, 'blocked', this.sim.blockedAt(id), mate);
+    else if (c === 'partner') this.view.showLane(id, 'ok', -1, -1);
+    audio.play('press', { volume: 0.7 });
   }
 
   tap(id: number): void {
@@ -67,12 +70,19 @@ export class Game {
     this.view.hint(null);
     const c = this.sim.check(id);
     if (c !== 'ok') {
-      this.view.shake(id);
-      audio.play('invalid');
+      this.view.nudge(id);
       if (c === 'full') {
         this.view.flashBowl();
-        this.cb.say(this.level.rules.bowl ? 'The bowl is full — that pot doesn\'t want it yet' : 'That pot doesn\'t want it yet');
-      } else if (c === 'frozen') this.cb.say('Frozen! Clear a tile next to it first');
+        audio.play('full');
+        const jar = this.level.rules.bowlOrder === 'lifo';
+        this.cb.say(!this.level.rules.bowl ? 'That pot doesn\'t want it yet' : jar ? 'The jar is full: that pot doesn\'t want it yet' : 'The bowl is full: that pot doesn\'t want it yet');
+        return;
+      }
+      audio.play('blocked');
+      if (c === 'frozen') this.cb.say('Frozen! Clear a tile next to it first');
+      else if (c === 'covered') this.cb.say('Under the cloche: clear a tile next to it to lift it');
+      else if (c === 'timer') this.cb.say(`Still marinating: ${this.sim.timerLeft(id)} more ingredient${this.sim.timerLeft(id) === 1 ? '' : 's'} into the pots`);
+      else if (c === 'partner') this.cb.say('Tied together: its partner can\'t follow right now');
       else if (c === 'wall') this.cb.say('That way is a wall');
       return;
     }

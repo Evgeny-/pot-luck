@@ -3,6 +3,7 @@ import levels from '../src/data/levels.json';
 import { geometryOf, tracePath } from '../src/core/board';
 import { Sim } from '../src/core/sim';
 import { WILD, tokenOf, type LevelDef } from '../src/core/types';
+import { cuisineById, cuisineIngredients } from '../src/core/cuisines';
 
 const LEVELS = levels as unknown as LevelDef[];
 
@@ -39,6 +40,23 @@ describe('campaign', () => {
     const items = lv.pots.flatMap((p) => p.dishes.flatMap((d) => d.items));
     expect(tokens.filter((t) => t !== WILD).length + tokens.filter((t) => t === WILD).length).toBe(items.length);
     expect([...tokens].sort()).toEqual([...items].sort());
+  });
+
+  it.each(LEVELS.map((lv) => [lv.n, lv] as const))('level %i: cooks with its cuisine and shows what it promises', (_n, lv) => {
+    const pool = new Set(cuisineIngredients(cuisineById(lv.cuisine)));
+    for (const t of lv.tiles) expect(pool.has(t.ing), `ingredient ${t.ing} in ${lv.cuisine}`).toBe(true);
+    const m = lv.mechanics ?? [];
+    if (m.includes('stacks')) expect(lv.tiles.some((t) => t.z)).toBe(true);
+    if (m.includes('links')) expect(lv.tiles.some((t) => t.link !== undefined)).toBe(true);
+    if (m.includes('cloche')) expect(lv.tiles.some((t) => t.hidden)).toBe(true);
+    if (m.includes('timer')) expect(lv.tiles.some((t) => t.timer)).toBe(true);
+    if (m.includes('jar')) expect(lv.rules.bowlOrder).toBe('lifo');
+    if (m.includes('lids')) expect(lv.pots.some((p) => p.lid !== undefined)).toBe(true);
+  });
+
+  it('starts with a one-spot bowl and grows it to two', () => {
+    for (const lv of LEVELS.slice(2, 7)) expect(lv.rules.bowl, `level ${lv.n}`).toBe(1);
+    expect(LEVELS[7].rules.bowl).toBe(2);
   });
 
   it('follows the sawtooth: every hard level is harder than the normal levels around it', () => {
