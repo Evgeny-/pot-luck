@@ -7,7 +7,10 @@ import { dishHtml, ingredientHtml, tokenHtml } from '../ui/iconStyle';
 import { frameFor } from '../ui/viewport';
 import { audio } from '../audio/audio';
 import { knifeBarSvg } from '../ui/knife';
+import { CLOCHE_SVG } from '../ui/cloche';
 import { lanePoints, pathMetrics, recipientCurve, roundedPath, routeOutsideBoard, type Point, type Rect } from './flight';
+
+export { CLOCHE_SVG } from '../ui/cloche';
 
 /**
  * The kitchen as DOM: a wooden board with ingredient tiles, an order ticket with a plate on every
@@ -19,17 +22,27 @@ export interface BoardHandlers {
   press(tile: number): void;
   release(): void;
   tap(tile: number): void;
+  bowlInfo?(uses: number): void;
 }
 
 const GAP = 9;
 const PAD = 8;
 
-export const CLOCHE_SVG =
-  '<svg viewBox="0 0 40 32"><defs><linearGradient id="clg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#fbfcfd"/><stop offset="1" stop-color="#a9b4c1"/></linearGradient></defs>' +
-  '<path d="M4 26 Q4 8 20 8 Q36 8 36 26 Z" fill="url(#clg)" stroke="#7f8a97" stroke-width="1.5"/>' +
-  '<rect x="1.5" y="25" width="37" height="5" rx="2.5" fill="#c3cbd5" stroke="#7f8a97" stroke-width="1.2"/>' +
-  '<circle cx="20" cy="6.5" r="3" fill="#c3cbd5" stroke="#7f8a97" stroke-width="1.2"/>' +
-  '<path d="M10 20 Q11 13 17 11" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".85"/></svg>';
+/** A ceramic vessel with a visible oval opening, curved sides and a small foot. */
+function bowlShell(width: number, height: number, openingHeight: number): string {
+  const cx = width / 2;
+  const cy = openingHeight / 2 + 8;
+  const rx = cx - 4;
+  const ry = Math.min(openingHeight / 2 + 2, height * 0.24);
+  return `<svg viewBox="0 0 ${width} ${height}" aria-hidden="true"><defs>` +
+    '<linearGradient id="bowl-body" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#fffdf5"/><stop offset="1" stop-color="#e6dac1"/></linearGradient>' +
+    '<radialGradient id="bowl-inside" cx="50%" cy="30%" r="75%"><stop stop-color="#fff8e6"/><stop offset="1" stop-color="#cbbd9d"/></radialGradient></defs>' +
+    `<ellipse cx="${cx}" cy="${height - 3}" rx="${width * 0.22}" ry="3" fill="#cab591" opacity=".65"/>` +
+    `<path d="M4 ${cy} Q${width * 0.07} ${height - 9} ${width * 0.32} ${height - 6} H${width * 0.68} Q${width * 0.93} ${height - 9} ${width - 4} ${cy} Z" fill="url(#bowl-body)" stroke="#c8b798" stroke-width="1.5"/>` +
+    `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="#fffdf6" stroke="#678faf" stroke-width="3"/>` +
+    `<ellipse cx="${cx}" cy="${cy}" rx="${Math.max(1, rx - 4)}" ry="${Math.max(1, ry - 4)}" fill="url(#bowl-inside)"/>` +
+    `<path d="M${width * 0.19} ${cy + ry + 2} Q${cx} ${height - 8} ${width * 0.81} ${cy + ry + 2}" fill="none" stroke="#fffdf4" stroke-width="2" opacity=".75"/></svg>`;
+}
 
 function tokenColor(t: Token): string {
   return t === WILD ? '#fff3a8' : INGREDIENTS[ingOf(t)]?.color ?? '#ccc';
@@ -50,6 +63,7 @@ export class BoardView {
   /** Per pot: the plate (kept across updates so its animations survive), recipe chips and lid badge. */
   private potParts: { plate: HTMLElement; strip: HTMLElement; extra: HTMLElement; icon: string }[] = [];
   private bowlEl: HTMLElement;
+  private bowlUsage: HTMLButtonElement;
   /** Tied pairs: a tray under both tiles and two cords stitched across the seam. */
   private tieUnder: SVGSVGElement;
   private tieOver: SVGSVGElement;
@@ -58,7 +72,10 @@ export class BoardView {
   private cell = 52;
   private chip = 24;
   private spot = 40;
+  private usageBeside = false;
   private recipeGaps: number[] = [];
+  /** Intended ticket positions along the board edge, independent of a recipe's width. */
+  private ticketOrigins: Point[] = [];
   /** Board origin (top-left of cell 0,0) in kitchen pixels. */
   private ox = 0;
   private oy = 0;
@@ -85,6 +102,13 @@ export class BoardView {
     this.root = h('div', { class: 'kitchen' });
     this.boardEl = h('div', { class: 'board' });
     this.bowlEl = h('div', { class: 'bowl' });
+    this.bowlUsage = h('button', { class: 'storage-usage', attrs: { type: 'button' } });
+    this.bowlUsage.addEventListener('click', (event) => {
+      event.stopPropagation();
+      audio.unlock();
+      audio.play('button');
+      this.handlers.bowlInfo?.(this.shown.parks);
+    });
     const svg = (cls: string) => {
       const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       el.setAttribute('class', `ties ${cls}`);
@@ -124,7 +148,16 @@ export class BoardView {
   private bowlHeight(spot: number): number {
     const cap = this.sim.bowlCap;
     if (!cap) return 0;
-    return this.level.rules.bowlOrder === 'lifo' ? cap * spot + 24 : spot + 18;
+    return this.bowlDimensions(spot, false).height + (this.usageBeside ? 0 : 50);
+  }
+
+  private bowlDimensions(spot: number, side: boolean): { width: number; height: number; slot: number; cols: number } {
+    const cap = this.sim.bowlCap;
+    if (this.level.rules.bowlOrder === 'lifo') return { width: spot + 28, height: cap * spot + 24, slot: spot, cols: 1 };
+    const cols = side ? Math.min(2, cap) : cap;
+    const slot = side && cap > 1 ? Math.round(spot * 0.52) : spot;
+    const rows = Math.ceil(cap / Math.max(1, cols));
+    return { width: cols * slot + Math.max(0, cols - 1) * 8 + 28, height: rows * slot + Math.max(0, rows - 1) * 8 + 32, slot, cols };
   }
 
   private ticketSize(pot: number): { width: number; height: number } {
@@ -133,7 +166,7 @@ export class BoardView {
     const count = Math.max(...p.dishes.map((dish) => dish.items.length));
     const recipe = count * this.chip + Math.max(0, count - 1) * (this.recipeGaps[pot] ?? 7);
     const plate = this.chip * 1.55;
-    return flat ? { width: plate + recipe + 21, height: plate + 10 } : { width: plate + 10, height: plate + recipe + 21 };
+    return flat ? { width: plate + recipe + 24, height: plate + 16 } : { width: plate + 16, height: plate + recipe + 24 };
   }
 
   private layout(): void {
@@ -146,13 +179,19 @@ export class BoardView {
     const nTB = (sides.has(0) ? 1 : 0) + (sides.has(2) ? 1 : 0);
     const areaW = W - fr.left - fr.right;
     const lidSpace = this.level.pots.some((pot) => pot.side === 0 && pot.lid !== undefined) ? 18 : 0;
-    const midH = H - fr.top - fr.bottom - lidSpace;
+    const actions = this.root.closest('#app')?.querySelector('.hud-actions');
+    const bounds = this.root.getBoundingClientRect();
+    const actionsBounds = actions?.getBoundingClientRect();
+    const actionTop = actionsBounds && bounds.height > 0 ? (actionsBounds.top - bounds.top) * H / bounds.height : H - fr.bottom;
+    const bottomSpace = !fr.wide && actionsBounds?.height ? H - actionTop + 10 : fr.bottom;
+    const midH = H - fr.top - bottomSpace - lidSpace;
     const jar = this.level.rules.bowlOrder === 'lifo';
     const cap = this.sim.bowlCap;
+    this.usageBeside = false;
     // Tickets and the bowl scale with the cell size; tall screens keep recipe chips larger.
     // The bowl sits under the board on tall screens and beside it on wide ones.
     const side = fr.wide && cap > 0;
-    const bowlRows = cap && !side ? (jar ? cap * 0.8 + 0.4 : 0.95) : 0;
+    const bowlRows = cap && !side ? (jar ? cap * 0.8 + 0.9 : 1.45) : 0;
     const bowlCols = side ? 1.15 : 0;
     const knifeLeft = this.level.bars?.some((bar) => bar.kind === 'knife' && bar.axis === 'h' && bar.from === 0) ? 32 : 0;
     const chipRatio = fr.wide ? 0.44 : 0.58;
@@ -170,15 +209,15 @@ export class BoardView {
       const longest = Math.max(...p.dishes.map((dish) => dish.items.length));
       const coefficient = 1.55 + longest;
       const room = flat ? areaW - 8 : midH - (cap && !side ? this.bowlHeight(this.spot) + 16 : 0) - 24;
-      const fixed = 21 + Math.max(0, longest - 1) * 7;
+      const fixed = 24 + Math.max(0, longest - 1) * 7;
       this.chip = Math.max(fr.wide ? 14 : 26, Math.min(this.chip, Math.floor((room - fixed) / coefficient)));
     }
     this.recipeGaps = this.level.pots.map((pot) => {
       if (pot.side === 1 || pot.side === 3) return 7;
       const count = Math.max(...pot.dishes.map((dish) => dish.items.length));
-      return count > 1 ? Math.max(2, Math.min(7, Math.floor((areaW - 8 - this.chip * 1.55 - 21 - count * this.chip) / (count - 1)))) : 7;
+      return count > 1 ? Math.max(1, Math.min(7, Math.floor((areaW - 8 - this.chip * 1.55 - 24 - count * this.chip) / (count - 1)))) : 7;
     });
-    const ticketSizes = this.level.pots.map((_, i) => this.ticketSize(i));
+    let ticketSizes = this.level.pots.map((_, i) => this.ticketSize(i));
     const sideSize = (direction: Dir, dimension: 'width' | 'height') => Math.max(0, ...this.level.pots.map((pot, i) => pot.side === direction ? ticketSizes[i][dimension] : 0));
     const leftTicket = sideSize(3, 'width');
     const rightTicket = sideSize(1, 'width');
@@ -186,20 +225,44 @@ export class BoardView {
     const bottomTicket = sideSize(2, 'height');
     // Minimum recipe sizes can exceed the proportional ticket estimate on a narrow screen.
     // Fit the board to the actual ticket widths while preserving readable recipe icons.
-    const maxCellW = Math.floor((areaW - 8 - 2 * PAD - leftTicket - rightTicket - nSide * GAP - (side ? this.spot + 34 + 2 * GAP : 0) - knifeLeft) / w);
+    const storageWidth = side ? Math.max(124, this.bowlDimensions(this.spot, true).width) : 0;
+    const maxCellW = Math.floor((areaW - 8 - 2 * PAD - leftTicket - rightTicket - nSide * GAP - (side ? storageWidth + 2 * GAP : 0) - knifeLeft) / w);
     cell = Math.min(cell, Math.max(24, maxCellW));
     this.cell = cell;
     this.spot = Math.max(32, Math.min(84, Math.round(cell * 0.8)));
+    const topBand = topTicket ? topTicket + GAP : 0;
+    const bottomBand = bottomTicket ? bottomTicket + GAP + 4 : 0;
+    const storageGap = GAP + 10 + (jar ? 12 : 0);
+    const minimumSideHeight = Math.max(0, ...this.level.pots.map((pot) => {
+      if (pot.side === 0 || pot.side === 2) return 0;
+      const count = Math.max(...pot.dishes.map((dish) => dish.items.length));
+      return this.chip * (count + 1.55) + Math.max(0, count - 1) + 24;
+    }));
+    const coreRoom = () => midH - topBand - bottomBand - (cap && !side ? this.bowlHeight(this.spot) + storageGap : 0);
+    const storage = this.bowlDimensions(this.spot, false);
+    // A crowded phone can keep the counter beside the vessel without reducing food sizes.
+    if (cap && !side && coreRoom() < Math.max(hh * cell + 2 * PAD, minimumSideHeight) && storage.width + 136 <= areaW - 8) this.usageBeside = true;
+    for (let pass = 0; pass < 2; pass++) {
+      const room = coreRoom();
+      this.recipeGaps = this.recipeGaps.map((gap, i) => {
+        const pot = this.level.pots[i];
+        if (pot.side === 0 || pot.side === 2) return gap;
+        const count = Math.max(...pot.dishes.map((dish) => dish.items.length));
+        return count > 1 ? Math.max(1, Math.min(7, Math.floor((room - this.chip * (count + 1.55) - 24) / (count - 1)))) : 7;
+      });
+      cell = Math.min(cell, Math.max(24, Math.floor((room - 2 * PAD) / hh)));
+      this.cell = cell;
+      this.spot = Math.max(32, Math.min(84, Math.round(cell * 0.8)));
+    }
+    ticketSizes = this.level.pots.map((_, i) => this.ticketSize(i));
     const bw = w * cell + 2 * PAD;
     const bh = hh * cell + 2 * PAD;
-    const bowlW = side ? this.spot + 34 : 0;
+    const bowlSize = this.bowlDimensions(this.spot, side);
+    const bowlW = side ? Math.max(124, bowlSize.width) : 0;
     const leftOfBoard = (leftTicket ? leftTicket + GAP : 0) + (side ? bowlW + 2 * GAP : 0) + knifeLeft;
     const blockW = bw + leftOfBoard + (rightTicket ? rightTicket + GAP : 0);
     const coreH = Math.max(bh, sideSize(1, 'height'), sideSize(3, 'height'));
     const overshoot = (coreH - bh) / 2;
-    const topBand = topTicket ? topTicket + GAP : 0;
-    const bottomBand = bottomTicket ? bottomTicket + GAP + 4 : 0;
-    const storageGap = GAP + 10 + (jar ? 12 : 0);
     const blockH = coreH + topBand + bottomBand + (cap && !side ? this.bowlHeight(this.spot) + storageGap : 0);
     const left = Math.round(fr.left + (areaW - blockW) / 2 + leftOfBoard);
     const coreTop = fr.top + lidSpace + Math.max(0, (midH - blockH) / 2) + topBand;
@@ -267,14 +330,20 @@ export class BoardView {
       else if (p.side === 3) [x, y, tf] = [left - GAP - knifeLeft, this.oy + mid * cell, 'translate(-100%, -50%)'];
       else [x, y, tf] = [left + bw + GAP, this.oy + mid * cell, 'translate(0, -50%)'];
       Object.assign(el.style, { left: `${x}px`, top: `${y}px`, transform: tf });
+      this.ticketOrigins[i] = [x, y];
     });
     this.bowlEl.classList.toggle('side', side);
+    this.bowlEl.classList.toggle('usage-beside', this.usageBeside);
+    this.bowlEl.style.setProperty('--bowl-slot', `${bowlSize.slot}px`);
+    Object.assign(this.bowlEl.style, { width: jar ? '' : `${bowlSize.width}px`, height: jar ? '' : `${bowlSize.height}px` });
     if (side) {
       const x = left - (leftTicket ? leftTicket + GAP : 0) - GAP - bowlW / 2 - knifeLeft;
       Object.assign(this.bowlEl.style, { left: `${x}px`, top: `${top + bh / 2}px`, transform: 'translate(-50%, -50%)' });
     } else {
       const bowlTop = coreTop + coreH + bottomBand + storageGap;
-      Object.assign(this.bowlEl.style, { left: `${left + bw / 2}px`, top: `${bowlTop}px`, transform: 'translate(-50%, 0)' });
+      const groupWidth = this.usageBeside ? bowlSize.width + 136 : Math.max(bowlSize.width, 124);
+      const center = Math.max(fr.left + groupWidth / 2 + 4, Math.min(W - fr.right - groupWidth / 2 - 4, left + bw / 2));
+      Object.assign(this.bowlEl.style, { left: `${center - (this.usageBeside ? 68 : 0)}px`, top: `${bowlTop}px`, transform: 'translate(-50%, 0)' });
     }
     for (const el of [this.tieUnder, this.tieOver]) {
       el.setAttribute('width', String(W));
@@ -471,6 +540,7 @@ export class BoardView {
     const want: number[] = [];
     this.level.pots.forEach((p, i) => {
       const el = this.potEls[i];
+      const wasDone = el.classList.contains('done');
       const anchor = this.potParts[i].icon ? this.centerOf(this.potParts[i].plate) : null;
       const done = sim.potDone(i);
       const cur = Math.min(sim.potDish[i], p.dishes.length - 1);
@@ -516,8 +586,12 @@ export class BoardView {
       }
       el.classList.toggle('done', done);
       el.classList.toggle('closed', p.lid !== undefined && !open);
-      // A shrinking recipe ticket keeps its plate in the same place throughout the delivery.
-      if (anchor) {
+      // Keep recipients still while cooking. A completed dish keeps the full ticket's centre.
+      const origin = this.ticketOrigins[i];
+      if (origin && (done || wasDone)) {
+        el.style.left = `${origin[0]}px`;
+        el.style.top = `${origin[1]}px`;
+      } else if (anchor && !done && !wasDone) {
         const position = this.centerOf(pp.plate);
         el.style.left = `${parseFloat(el.style.left) + anchor[0] - position[0]}px`;
         el.style.top = `${parseFloat(el.style.top) + anchor[1] - position[1]}px`;
@@ -547,12 +621,21 @@ export class BoardView {
       const top = jar && k === sim.bowlLen - 1;
       spots.push(`<span class="spot${t >= 0 ? ' taken' : ''}${top ? ' top' : ''}" data-k="${k}">${t >= 0 ? `<span class="s-icon">${tokenHtml(t)}</span>${formBadge(t)}` : ''}</span>`);
     }
-    const label = jar ? '' : `<span class="label">${emoji('bowl-with-spoon', 26)}</span>`;
-    const html = label + spots.join('');
+    const side = this.bowlEl.classList.contains('side');
+    const size = this.bowlDimensions(this.spot, side);
+    const rows = Math.ceil(cap / Math.max(1, size.cols));
+    const opening = rows * size.slot + Math.max(0, rows - 1) * 8;
+    const html = jar ? spots.join('') : `<span class="bowl-shell">${bowlShell(size.width, size.height, opening)}</span><span class="bowl-spots" style="grid-template-columns:repeat(${Math.max(1, size.cols)},${size.slot}px)">${spots.join('')}</span>`;
     if (this.bowlEl.dataset.html !== html) {
       this.bowlEl.innerHTML = html;
       this.bowlEl.dataset.html = html;
     }
+    const word = jar ? 'Jar' : 'Bowl';
+    const par = this.level.stats?.par ?? 0;
+    this.bowlUsage.innerHTML = `<span class="usage-count"><span>${word} · <strong>${sim.parks}</strong> ${sim.parks === 1 ? 'use' : 'uses'}</span><span class="usage-info-dot" aria-hidden="true">?</span></span><span class="usage-goal">3★ · up to ${par} ${par === 1 ? 'use' : 'uses'}</span>`;
+    this.bowlUsage.setAttribute('aria-label', `${word} used ${sim.parks} ${sim.parks === 1 ? 'time' : 'times'}. Three stars allow up to ${par} ${par === 1 ? 'use' : 'uses'}. Show star scoring.`);
+    this.bowlUsage.title = 'How storage use affects stars';
+    this.bowlEl.append(this.bowlUsage);
   }
 
   // ---------------------------------------------------------------- feedback
@@ -648,6 +731,7 @@ export class BoardView {
         else {
           this.shown.bowlTok[e.slot] = e.token;
           this.shown.bowlLen++;
+          this.shown.parks++;
           this.renderBowl(this.shown);
           this.bowlEl.querySelector(`.spot[data-k="${e.slot}"]`)?.classList.add('land');
           audio.play('park', { pitch: 0.95 + Math.random() * 0.1 });
@@ -735,10 +819,10 @@ export class BoardView {
     const spot = this.bowlEl.querySelector<HTMLElement>(`.spot[data-k="${e.slot}"]`);
     const targetEl = e.into === 'pot' ? this.targetOf(e.pot, e.item) : spot ?? this.bowlEl;
     const target = this.centerOf(targetEl);
-    const flight = e.into === 'pot' ? recipientCurve(last, target, lane.direction, this.cell) : this.bowlRoute(last, target, lane.direction);
+    const flight = e.into === 'pot' ? recipientCurve(last, target, lane.direction, this.cell) : this.bowlRoute(last, target, lane.direction, spot ? this.widthOf(spot) : this.spot);
     const points = [...lane.points, ...flight.slice(1)];
     const laneLength = pathMetrics(lane.points).total;
-    const endSize = e.into === 'pot' ? this.widthOf(targetEl) : (spot?.clientWidth ?? this.spot) * 0.76;
+    const endSize = e.into === 'pot' ? this.widthOf(targetEl) : (spot ? this.widthOf(spot) : this.spot) * 0.76;
     // A copy of the picture stays put while its enamel tile and arrow fade away at the edge.
     // Its final size exactly matches the bowl icon, avoiding the old landing size jump.
     icon.style.visibility = 'hidden';
@@ -761,8 +845,9 @@ export class BoardView {
 
   /** The required ingredient acknowledges its delivery; the dish stays still until it is served. */
   private land(pot: number, item: number, token: Token, arrival: Point): void {
-    const chip = this.targetOf(pot, item).closest('.chip');
-    if (chip) this.animate(chip, [{ scale: '1' }, { scale: '1.12', offset: 0.35 }, { scale: '1' }], { duration: 250, easing: 'ease-out' });
+    const picture = this.targetOf(pot, item);
+    // Pop the inset picture so even a one-pixel recipe gap stays clear of its neighbours.
+    this.animate(picture, [{ scale: '1' }, { scale: '1.1', offset: 0.35 }, { scale: '1' }], { duration: 250, easing: 'ease-out' });
     const [x, y] = arrival;
     this.drops(x, y, tokenColor(token));
     audio.play('plop', { pitch: 0.9 + Math.random() * 0.25 });
@@ -774,12 +859,12 @@ export class BoardView {
     return [center[0], center[1] - this.bowlEl.clientHeight / 2 - 10];
   }
 
-  private bowlRoute(from: Point, to: Point, dir: Dir): Point[] {
-    const clearance = Math.max(this.cell * 0.3, this.spot * 0.42);
+  private bowlRoute(from: Point, to: Point, dir: Dir, spot = this.spot): Point[] {
+    const clearance = Math.max(this.cell * 0.3, spot * 0.42);
     const outside: Point = [from[0] + DX[dir] * clearance, from[1] + DY[dir] * clearance];
     const jar = this.level.rules.bowlOrder === 'lifo';
     const mouth = jar ? this.bowlMouth() : to;
-    const approach: Point = [mouth[0], mouth[1] - (jar ? clearance : this.spot * 0.45)];
+    const approach: Point = [mouth[0], mouth[1] - (jar ? clearance : spot * 0.45)];
     const around = routeOutsideBoard(outside, approach, this.boardRect(), clearance);
     const points = [from, ...around, mouth];
     if (jar) points.push(to);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AudioEngine, audio, type MusicTheme, type SfxName } from '../src/audio/audio';
+import { AudioEngine, audio, composeMusicBar, scheduleMusicPreview, type MusicTheme, type SfxName } from '../src/audio/audio';
 
 // Every name is listed once; the Record type makes the compiler catch missing or unknown names.
 const SFX_NAMES: Record<SfxName, true> = {
@@ -10,6 +10,47 @@ const SFX_NAMES: Record<SfxName, true> = {
 const THEME_NAMES: Record<MusicTheme, true> = { menu: true, italy: true, japan: true, mexico: true, usa: true, india: true, china: true };
 const SFX = Object.keys(SFX_NAMES) as SfxName[];
 const THEMES = Object.keys(THEME_NAMES) as MusicTheme[];
+
+describe('music phrases and arrangement', () => {
+  it.each(THEMES)('%s develops a melody and changes its lead instrument', (theme) => {
+    const bars = Array.from({ length: 64 }, (_, bar) => composeMusicBar(theme, bar, 7));
+    const melody = bars.flat().filter((note) => note.part === 'melody');
+    expect(new Set(melody.flatMap((note) => note.pitches)).size).toBeGreaterThanOrEqual(5);
+    expect(new Set(melody.map((note) => note.instrument)).size).toBeGreaterThanOrEqual(2);
+    let repeated = 0;
+    let previous = -1;
+    for (const note of melody) {
+      repeated = note.pitches[0] === previous ? repeated + 1 : 1;
+      expect(repeated).toBeLessThanOrEqual(3);
+      previous = note.pitches[0];
+    }
+    const signature = (start: number) => bars.slice(start, start + 8).map((bar) => bar.filter((note) => note.part === 'melody').map((note) => [note.step, note.pitches, note.beats]));
+    expect(signature(32)).not.toEqual(signature(0));
+  });
+
+  it.each(THEMES)('%s breathes at cadences and thins its bridge', (theme) => {
+    const beats = theme === 'italy' || theme === 'menu' ? 3 : theme === 'mexico' ? 2 : 4;
+    const sub = theme === 'mexico' ? 3 : 2;
+    const bars = Array.from({ length: 32 }, (_, bar) => composeMusicBar(theme, bar, 7));
+    for (const bar of [7, 15, 23, 31]) {
+      const lastEnd = Math.max(...bars[bar].filter((note) => note.part === 'melody').map((note) => note.step / sub + note.beats));
+      expect(lastEnd).toBeLessThanOrEqual(beats - .5);
+    }
+    const statement = bars.slice(0, 8).flat();
+    const bridge = bars.slice(16, 24).flat();
+    expect(bridge.length).toBeLessThan(statement.length);
+    const leadLevel = (notes: typeof statement) => notes.filter((note) => note.part === 'melody').reduce((sum, note) => sum + note.velocity, 0) / notes.filter((note) => note.part === 'melody').length;
+    expect(leadLevel(bridge)).toBeLessThan(leadLevel(statement));
+    expect(new Set(bars.flat().filter((note) => note.part === 'support').flatMap((note) => note.pitches).filter((midi) => midi < 60)).size).toBeGreaterThanOrEqual(3);
+    for (const note of bars.flat()) {
+      expect(note.step).toBeGreaterThanOrEqual(0);
+      expect(note.step).toBeLessThan(beats * sub);
+      expect(note.beats).toBeGreaterThan(0);
+      expect(note.velocity).toBeGreaterThan(0);
+      expect(note.velocity).toBeLessThanOrEqual(1);
+    }
+  });
+});
 
 // ---------------------------------------------------------------- a small validating fake of Web Audio
 // The engine swallows exceptions so audio can never break the game; the fake therefore records every
@@ -417,7 +458,7 @@ describe('audio with a mocked AudioContext', () => {
     for (const theme of THEMES) {
       const first = ctx.nodes.length;
       eng.startMusic(theme);
-      run(ctx, 40);
+      run(ctx, 120); // Slow themes reach their bridge, return and next phrase cycle.
       const fresh = ctx.sources().filter((s) => ctx.nodes.indexOf(s) >= first);
       expect(fresh.length, theme).toBeGreaterThan(100);
       for (const s of fresh) {
@@ -427,7 +468,7 @@ describe('audio with a mocked AudioContext', () => {
         expect(s.stopAt!, theme).toBeGreaterThan(s.startAt!);
       }
       // past the crossfade: one song only
-      const steady = fresh.filter((s) => s.startAt! > ctx.currentTime - 30);
+      const steady = fresh.filter((s) => s.startAt! > ctx.currentTime - 117);
       expect(maxOverlap(steady), theme).toBeLessThanOrEqual(40);
     }
     // the same theme again does not restart it
@@ -464,6 +505,17 @@ describe('audio with a mocked AudioContext', () => {
     const stop = fresh[0].gain.events[fresh[0].gain.events.length - 1];
     expect(stop.v).toBe(0);
     expect(stop.t - ctx.currentTime).toBeGreaterThan(0.029);
+    expect(errors).toEqual([]);
+  });
+
+  it('renders the same score offline without creating scheduler timers', () => {
+    vi.useFakeTimers();
+    const ctx = new FakeCtx();
+    scheduleMusicPreview(ctx as unknown as AudioContext, 'italy', 60, 7);
+    expect(vi.getTimerCount()).toBe(0);
+    const sources = ctx.sources();
+    expect(sources.length).toBeGreaterThan(100);
+    expect(Math.max(...sources.map((source) => source.startAt ?? 0))).toBeGreaterThan(58);
     expect(errors).toEqual([]);
   });
 

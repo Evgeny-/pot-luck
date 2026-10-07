@@ -152,29 +152,6 @@ const deg = (scale: readonly number[], i: number) => {
 };
 /** Moves `m` by whole octaves into [lo, lo + 12). */
 const fold = (m: number, lo: number) => m - 12 * Math.floor((m - lo) / 12);
-/** The member of `cands` closest to `x`; ties and near-ties are broken randomly for variety. */
-const nearest = (x: number, cands: number[], r: Rand) => {
-  let best = cands[0];
-  let bd = Infinity;
-  for (const c of cands) {
-    const d = Math.abs(c - x) + r.next() * 0.9;
-    if (d < bd) {
-      bd = d;
-      best = c;
-    }
-  }
-  return best;
-};
-/** Chord-tone scale indexes (chord rooted on degree `d`, 7-note scale) inside [lo, hi]. */
-const chordTones = (d: number, lo: number, hi: number, size = 3) => {
-  const out: number[] = [];
-  for (let i = lo; i <= hi; i++) {
-    const rel = (((i - d) % 7) + 7) % 7;
-    if (rel === 0 || rel === 2 || rel === 4 || (size > 3 && rel === 6)) out.push(i);
-  }
-  return out;
-};
-
 // ---------------------------------------------------------------- voice specs
 
 /** A shared route for voices at one stereo position and reverb amount (no per-voice panner or send). */
@@ -277,6 +254,10 @@ export class AudioEngine implements Audio {
   private duckEnd = 0;
   private suspendedByHide = false;
 
+  constructor(context?: AudioContext) {
+    if (context) this.init(context);
+  }
+
   get ready(): boolean {
     return !!this.ctx && this.ctx.state === 'running';
   }
@@ -301,16 +282,16 @@ export class AudioEngine implements Audio {
     }
   }
 
-  private init(): void {
+  private init(provided?: AudioContext): void {
     const g = globalThis as unknown as { AudioContext?: CtxCtor; webkitAudioContext?: CtxCtor };
     const Ctor = g.AudioContext ?? g.webkitAudioContext;
-    if (!Ctor) {
+    if (!Ctor && !provided) {
       this.failed = true;
       return;
     }
     let ctx: AudioContext;
     try {
-      ctx = new Ctor({ latencyHint: 'interactive' });
+      ctx = provided ?? new Ctor!({ latencyHint: 'interactive' });
     } catch {
       this.failed = true;
       return;
@@ -959,7 +940,7 @@ interface ThemeSpec {
   /** delay of every odd step, as a fraction of a step */
   swing: number;
   level: number;
-  make(): ThemeRun;
+  make(seed: number): ThemeRun;
 }
 
 type Stroke = 'na' | 'tin' | 'ti' | 'ge' | 'gew' | 'ka';
@@ -981,10 +962,10 @@ class Song {
   private stopAt = 0;
   private dead = false;
 
-  constructor(private readonly eng: AudioEngine, readonly theme: MusicTheme, private readonly seed: number) {
+  constructor(private readonly eng: AudioEngine, readonly theme: MusicTheme, private readonly seed: number, offline = false) {
     const ctx = eng.ctx!;
     this.spec = THEMES[theme];
-    this.run = this.spec.make();
+    this.run = this.spec.make(seed);
     this.stepDur = 60 / this.spec.bpm / this.spec.sub;
     this.per = this.spec.beats * this.spec.sub;
     const now = ctx.currentTime;
@@ -998,8 +979,15 @@ class Song {
     this.wet.connect(eng.musicWet!);
     this.out = { dry: this.dry, wet: this.wet, lanes: new Map() };
     this.next = now + 0.1;
-    this.timer = setInterval(() => this.pump(), TICK_MS);
-    this.pump();
+    if (!offline) {
+      this.timer = setInterval(() => this.pump(), TICK_MS);
+      this.pump();
+    }
+  }
+
+  /** Schedules a bounded preview without a real-time timer or a backlog. */
+  scheduleOffline(seconds: number): void {
+    for (let k = 0, t = 0.1; t < seconds; k++, t = 0.1 + k * this.stepDur) this.tick(t, k);
   }
 
   private pump(): void {
@@ -1117,7 +1105,7 @@ class Song {
    */
   mandolin(t: number, m: number, vel: number, ring: number, pan = 0, det = 0): void {
     const e: Env = { g: 0.034 * vel, a: 0.002, d: ring, pan, wet: 0.25 };
-    if (this.admit(t, e)) this.eng.tone(this.out, t, { ...e, type: 'sawtooth', f: mtof(m), det, lp: 2400, q: 1.2 });
+    if (this.admit(t, e)) this.eng.tone(this.out, t, { ...e, type: 'triangle', f: mtof(m), det, add: [{ type: 'sawtooth', g: .18 }], lp: 1900, q: .7 });
   }
 
   /** Accordion chord: per note a square and a saw reed a few cents apart (musette), one bellows (one voice). */
@@ -1332,444 +1320,228 @@ class Song {
   }
 }
 
-// ---------------------------------------------------------------- themes
+// ---------------------------------------------------------------- composition
 
-/** Closest voicing of pitch classes `pcs` to the previous voicing, lowest note in [lo, lo + 12). */
-function voiceLead(prev: number[], pcs: number[], lo: number): number[] {
-  let best = prev;
-  let bd = Infinity;
-  for (let inv = 0; inv < pcs.length; inv++) {
-    const v = [fold(pcs[inv], lo)];
-    for (let i = 1; i < pcs.length; i++) {
-      const pc = pcs[(inv + i) % pcs.length];
-      const last = v[v.length - 1];
-      v.push(last + ((((pc - last) % 12) + 12) % 12 || 12));
-    }
-    let dist = 0;
-    for (let i = 0; i < Math.min(v.length, prev.length); i++) dist += Math.abs(v[i] - prev[i]);
-    if (dist < bd) {
-      bd = dist;
-      best = v;
-    }
-  }
-  return best;
+export type MusicInstrument = 'musicBox' | 'pad' | 'softBass' | 'mandolin' | 'accordion' | 'accBass'
+  | 'koto' | 'flute' | 'drum' | 'marimba' | 'dyad' | 'guitarron' | 'shaker' | 'upright' | 'epiano'
+  | 'vibes' | 'brush' | 'ride' | 'kick' | 'tanpura' | 'sitar' | 'tabla' | 'guzheng' | 'erhu' | 'woodblock';
+
+/** One score event, expressed in musical time rather than AudioContext time. */
+export interface MusicNote {
+  part: 'melody' | 'support';
+  instrument: MusicInstrument;
+  step: number;
+  pitches: number[];
+  beats: number;
+  velocity: number;
+  pan: number;
+  stroke?: Stroke;
 }
 
-/** Lullaby in F major, 3/4: a music box plays broken chords and a simple tune over a warm pad. */
-const menu: ThemeSpec = {
-  bpm: 66, beats: 3, sub: 2, swing: 0.06, level: 1,
-  make() {
-    const root = 65; // F4
-    const A = [0, 5, 3, 4, 0, 5, 1, 4]; // I vi IV V I vi ii V
-    const B = [3, 0, 1, 4, 3, 0, 4, 0]; // IV I ii V IV I V I
-    const RHY = [[0, 2, 4], [0, 3, 4], [0, 2, 3, 4], [0, 4]];
-    let mel = 9; // scale index above F4 (7 = F5)
-    let rhythm = RHY[0];
-    let twinkle = -1;
-    return {
-      step(p, b, s, t) {
-        const r = b.r;
-        const d = (b.alt ? B : A)[b.pos];
-        const third = deg(MAJOR, d + 2) - deg(MAJOR, d);
-        const fifth = deg(MAJOR, d + 4) - deg(MAJOR, d);
-        const base = fold(root + deg(MAJOR, d), 53);
-        if (s === 0) {
-          const bar = b.beat * 3;
-          p.softBass(t, base - 12, bar * 0.9, 0.9);
-          p.pad(t, [fold(base + third, 57), fold(base + fifth, 57)], bar, 0.8);
-          rhythm = b.pos % 4 === 3 ? r.pick([[0], [0, 4]]) : r.pick(RHY);
-          if (b.alt && b.pos === 0 && r.chance(0.5)) rhythm = []; // a breath
-          twinkle = r.chance(0.14) ? 2 + r.int(4) : -1;
-        }
-        // Low broken chord, 1-5-10-5-10-5, with the odd note left out.
-        const arp = [0, fifth, third + 12, fifth, third + 12, fifth];
-        if (s === 0 || !r.chance(0.12)) p.musicBox(t, base + arp[s], s === 0 ? 0.7 : 0.45, -0.2);
-        if (rhythm.includes(s)) {
-          if (s === 0) mel = nearest(mel + r.pick([-2, -1, 0, 1, 2]), chordTones(d, 5, 13), r);
-          else mel = clamp(mel + r.pick([-2, -1, -1, 1, 1, 2]), 5, 13);
-          p.musicBox(t, root + deg(MAJOR, mel), s === 0 ? 0.85 : 0.65, 0.2);
-        }
-        if (s === twinkle) p.musicBox(t, root + 24 + r.pick([0, 4, 7, 12]), 0.3, -0.35); // a high tine, now and then
-      },
-    };
+type TuneNote = readonly [step: number, degree: number, beats: number];
+type Tune = readonly (readonly TuneNote[])[];
+
+/** Eight-bar melodies have a question, an answer and room after their final cadence. */
+const TUNES: Record<MusicTheme, { main: Tune; bridge: Tune }> = {
+  menu: {
+    main: [ [[0,2,1],[2,4,1],[4,3,.65]], [[0,2,1.5],[4,0,.75]], [[0,1,.75],[2,3,.75],[4,5,.75]], [[0,4,1.5],[4,1,.5]],
+      [[0,2,.5],[1,1,.5],[2,0,1]], [[0,3,1],[2,2,.5],[3,1,.5]], [[0,1,.5],[1,2,.5],[2,3,1]], [[0,0,1.8]] ],
+    bridge: [ [[0,5,1],[3,3,1]], [[0,4,1.5]], [[1,2,1],[4,0,.75]], [[0,2,1],[3,4,.75]],
+      [[0,3,1],[2,1,1]], [[0,2,.75],[3,1,.75]], [[0,1,1],[3,4,.75]], [[0,0,1.8]] ],
+  },
+  italy: {
+    main: [ [[0,2,1],[2,4,.5],[3,5,.5],[4,4,.75]], [[0,2,1],[2,1,.5],[3,2,.5],[4,0,.8]],
+      [[0,1,.75],[2,3,.75],[4,5,.8]], [[0,4,1.5],[4,1,.6]], [[0,2,.5],[1,1,.5],[2,0,1.2],[5,2,.35]],
+      [[0,3,1],[2,1,.5],[3,2,.5],[4,3,.8]], [[0,1,.5],[1,2,.5],[2,3,.75],[4,1,.6]], [[0,0,1.8]] ],
+    bridge: [ [[0,5,1],[2,4,.5],[3,3,.5]], [[0,3,1.5],[4,1,.7]], [[0,2,1],[2,4,1]], [[0,2,1.5]],
+      [[1,1,.5],[2,3,1],[4,4,.7]], [[0,4,1],[2,3,.5],[3,2,.5]], [[0,1,1],[2,4,1]], [[0,0,1.8]] ],
+  },
+  japan: {
+    main: [ [[0,0,1.5],[4,2,1]], [[1,3,1],[4,2,1.5]], [[0,4,1],[3,3,.5],[5,2,1]], [[0,1,2]],
+      [[0,2,1],[3,3,1]], [[1,4,1],[4,5,1]], [[0,3,1.5],[4,1,1]], [[0,0,2.2]] ],
+    bridge: [ [[1,4,1.5],[5,3,.75]], [[0,2,2]], [[2,3,1],[5,1,1]], [[0,0,2.5]],
+      [[0,2,1],[3,4,1]], [[1,3,1.5]], [[0,1,1.5],[4,2,1]], [[0,0,2.3]] ],
+  },
+  mexico: {
+    main: [ [[0,2,.66],[2,4,.33],[3,5,.66],[5,4,.3]], [[0,2,.66],[2,1,.33],[3,0,.66]],
+      [[0,3,.66],[2,4,.33],[3,5,.66]], [[0,4,1],[4,1,.5]], [[0,2,.33],[1,1,.33],[2,0,.66],[4,2,.5]],
+      [[0,3,.66],[2,2,.33],[3,1,.66]], [[0,1,.33],[1,2,.33],[2,3,.66],[4,1,.5]], [[0,0,1.3]] ],
+    bridge: [ [[0,5,.66],[3,3,.66]], [[1,4,1]], [[0,2,.66],[3,0,.66]], [[0,2,1.2]],
+      [[0,3,.66],[3,4,.66]], [[1,2,.66],[4,1,.5]], [[0,1,.66],[3,4,.66]], [[0,0,1.3]] ],
+  },
+  usa: {
+    main: [ [[1,2,.5],[3,4,1],[6,3,.5]], [[0,2,1],[3,1,.5],[5,0,1]], [[1,1,.5],[3,3,.5],[5,4,1]], [[0,3,1.5],[5,1,.7]],
+      [[1,2,.5],[2,1,.5],[4,0,1]], [[0,3,1],[3,4,.5],[5,5,.7]], [[1,4,.5],[3,3,.5],[5,1,.8]], [[0,0,2.2]] ],
+    bridge: [ [[1,5,.5],[3,4,1]], [[0,3,2]], [[2,2,.75],[5,0,.8]], [[1,2,1.5]],
+      [[0,3,1],[3,4,1]], [[1,2,.5],[3,1,1]], [[0,1,1],[4,3,1]], [[0,0,2.2]] ],
+  },
+  india: {
+    main: [ [[1,2,1],[4,4,1]], [[0,5,1],[3,4,.5],[5,2,1]], [[1,3,.75],[3,4,.75],[6,6,.75]], [[0,4,2]],
+      [[0,2,1],[3,1,.5],[5,0,1]], [[1,1,.75],[3,2,.75],[6,4,.75]], [[0,3,1],[3,2,.5],[5,1,1]], [[0,0,2.3]] ],
+    bridge: [ [[0,6,1.5],[4,4,1]], [[1,5,1.5]], [[0,4,1],[3,2,1]], [[0,2,2]],
+      [[1,3,1],[4,4,1]], [[0,2,1],[4,1,1]], [[1,1,1],[4,2,1]], [[0,0,2.5]] ],
+  },
+  china: {
+    main: [ [[0,2,1],[3,3,1]], [[1,4,1],[4,5,1.2]], [[0,4,1],[3,3,.5],[5,2,1]], [[0,1,2]],
+      [[0,2,.5],[1,1,.5],[3,0,1]], [[1,3,1],[4,4,1]], [[0,3,1],[3,1,1]], [[0,0,2.2]] ],
+    bridge: [ [[1,5,1],[4,3,1]], [[0,4,2]], [[1,2,1],[4,0,1]], [[0,2,2]],
+      [[0,3,1],[3,4,1]], [[1,2,1],[4,1,1]], [[0,1,1],[3,3,1]], [[0,0,2.3]] ],
   },
 };
 
-/** Italian trattoria waltz in G: accordion oom-pah-pah, mandolin tremolo melody (often in thirds). */
-const italy: ThemeSpec = {
-  bpm: 96, beats: 3, sub: 6, swing: 0, level: 1.25,
-  make() {
-    const root = 67; // G4
-    const A = [0, 3, 4, 0, 5, 1, 4, 0]; // I IV V7 I vi ii V7 I
-    const B = [0, 4, 4, 0, 3, 0, 4, 0]; // I V7 V7 I IV I V7 I
-    // melody rhythms: [beat, length in beats, tremolo]
-    const RHY: [number, number, boolean][][] = [
-      [[0, 3, true]],
-      [[0, 2, true], [2, 1, false]],
-      [[0, 1, false], [1, 1, false], [2, 1, true]],
-      [[0, 1, false], [1, 2, true]],
-      [[0, 0.5, false], [0.5, 0.5, false], [1, 2, true]],
-    ];
-    let mel = 2; // scale index above G4
-    let plan = RHY[0];
-    let trem: { m: number; m2: number; until: number } | null = null;
-    let up = false;
-    let voicing = [59, 62, 67];
-    return {
-      step(p, b, s, t) {
-        const r = b.r;
-        const d = (b.alt ? B : A)[b.pos];
-        const dom = d === 4;
-        const cad = b.pos % 4 === 3;
-        if (s === 0) {
-          plan = cad ? [[0, 3, true]] : r.pick(RHY);
-          // "oom": the root, or the fifth on every other bar
-          const bassDeg = b.n % 2 === 1 && !cad ? d + 4 : d;
-          p.accBass(t, fold(root + deg(MAJOR, bassDeg) - 24, 41), b.beat * 0.9, 0.9);
-          const pcs = [d, d + 2, dom ? d + 6 : d + 4].map((x) => (root + deg(MAJOR, x)) % 12);
-          voicing = voiceLead(voicing, pcs, 55);
-        }
-        // "pah-pah" on beats two and three; the last bar of a phrase holds the chord instead.
-        if (s === 6 || s === 12) {
-          if (!cad) p.accordion(t, voicing, b.beat * 0.55, s === 6 ? 0.8 : 0.7);
-          else if (s === 6) p.accordion(t, voicing, b.beat * 1.9, 0.75);
-        }
-        for (const [bt, len, tr] of plan) {
-          if (Math.round(bt * 6) !== s) continue;
-          if (bt === 0) mel = nearest(mel + r.pick([-2, -1, 0, 1, 2]), chordTones(d, -3, 8, dom ? 4 : 3), r);
-          else mel = clamp(mel + r.pick([-2, -1, -1, 1, 1, 2]), -3, 8);
-          const m = root + deg(MAJOR, mel);
-          const m2 = r.chance(0.4) ? root + deg(MAJOR, mel - 2) : 0;
-          if (tr) trem = { m, m2, until: t + len * b.beat - 0.03 };
-          else {
-            trem = null;
-            p.mandolin(t, m, 0.85, 0.5, 0.1);
-            if (m2) p.mandolin(t, m2, 0.5, 0.45, -0.1);
-          }
-        }
-        if (trem && t < trem.until) {
-          up = !up;
-          const v = (up ? 0.55 : 0.75) * r.range(0.85, 1.1);
-          const det = up ? 6 : -4;
-          p.mandolin(t, trem.m, v, 0.17, 0.1, det);
-          if (trem.m2) p.mandolin(t, trem.m2, v * 0.6, 0.17, -0.1, -det);
-        }
-      },
-    };
-  },
+const PROGRESSION = [0, 5, 3, 4, 0, 1, 4, 0];
+const BRIDGE_CHORDS = [3, 3, 0, 5, 1, 4, 4, 0];
+const ROOTS: Record<MusicTheme, number> = { menu: 65, italy: 67, japan: 64, mexico: 72, usa: 60, india: 62, china: 62 };
+const SCALES: Partial<Record<MusicTheme, number[]>> = { japan: [0, 1, 5, 7, 8], usa: [0, 2, 4, 7, 9], india: [0, 2, 4, 6, 7, 9, 11], china: [0, 2, 4, 7, 9] };
+const SETTINGS: Record<MusicTheme, Omit<ThemeSpec, 'make'>> = {
+  menu: { bpm: 68, beats: 3, sub: 2, swing: 0, level: .95 },
+  italy: { bpm: 92, beats: 3, sub: 2, swing: 0, level: 1.05 },
+  japan: { bpm: 68, beats: 4, sub: 2, swing: 0, level: 1.08 },
+  mexico: { bpm: 90, beats: 2, sub: 3, swing: .035, level: 1.0 },
+  usa: { bpm: 94, beats: 4, sub: 2, swing: .22, level: 1.05 },
+  india: { bpm: 66, beats: 4, sub: 2, swing: .025, level: 1.12 },
+  china: { bpm: 72, beats: 4, sub: 2, swing: 0, level: 1.08 },
 };
 
-/** Japanese garden: koto plucks on the miyako-bushi scale (E F A B C), a breathy flute, rare soft drums. */
-const japan: ThemeSpec = {
-  bpm: 60, beats: 4, sub: 2, swing: 0, level: 1.3,
-  make() {
-    const root = 64; // E4
-    const SC = [0, 1, 5, 7, 8];
-    const BASS_A = [0, 0, 2, 3, 4, 2, 1, 0]; // E E A B C A F E
-    const BASS_B = [0, 2, 0, 4, 3, 2, 1, 0]; // E A E C B A F E
-    const ARP = [[2, 3, 5], [1, 2, 4, 6], [2, 5], [3, 5, 6], [2, 4, 5, 7]];
-    const FLUTE: [number, number][][] = [[[0, 6]], [[0, 3], [4, 4]], [[2, 6]], [[0, 2], [2, 6]]];
-    let arp = ARP[0];
-    let fl = 5; // flute scale index above E4 (5 = E5)
-    let flute: [number, number][] = [];
-    return {
-      step(p, b, s, t) {
-        const r = b.r;
-        const bi = (b.alt ? BASS_B : BASS_A)[b.pos];
-        const low = root - 12 + deg(SC, bi);
-        const hum = r.range(-0.012, 0.012);
-        if (s === 0) {
-          arp = r.pick(ARP);
-          if (b.pos === 0 && r.chance(0.6)) {
-            // a quick upward sweep into the downbeat
-            for (let i = 0; i < 4; i++) p.koto(t + i * 0.045, low + deg(SC, i), 0.5 + i * 0.12, -0.3 + i * 0.15, undefined, 1.4);
-          } else p.koto(t, low, 0.9, -0.15, undefined, 2.2);
-          const fb = b.pos % 4;
-          flute = (fb === 1 || fb === 2) && !(b.alt && b.pos >= 4) ? r.pick(FLUTE) : [];
-          if (b.pos % 4 === 0) p.drum(t, 110, 62, 0.6, 0.7);
-        }
-        if (s === 1 && r.chance(0.45)) p.koto(t + hum, low + 12, 0.5, 0.1, undefined, 1.4);
-        if (arp.includes(s)) {
-          const idx = bi + r.pick([2, 3, 4, 5, 7]);
-          const m = root - 12 + deg(SC, idx);
-          const above = root - 12 + deg(SC, idx + 1);
-          const bend = r.chance(0.18) && above - m <= 2 ? above : undefined;
-          p.koto(t + hum, m, r.range(0.45, 0.7), r.range(-0.4, 0.4), bend, 1.5);
-        }
-        for (const [st, len] of flute) {
-          if (st !== s) continue;
-          fl = clamp(fl + r.pick([-2, -1, 1, 2]), 2, 8);
-          p.flute(t, root + deg(SC, fl), len * b.step, 0.8, 0.1);
-        }
-        if (s === 6 && b.pos % 2 === 1 && r.chance(0.35)) p.drum(t, 330, 200, 0.35, 0.35); // kotsuzumi "pon"
-      },
-    };
-  },
-};
+/** A 32-bar form: statement, response, quieter bridge, return. New cycles vary accents and fills. */
+export function composeMusicBar(theme: MusicTheme, bar: number, seed = 7): MusicNote[] {
+  const section = Math.floor(bar / 8) % 4;
+  const pos = bar % 8;
+  const cycle = Math.floor(bar / 32);
+  const r = new Rand(hash(seed, bar));
+  const bridge = section === 2;
+  const cadence = pos === 7;
+  const dynamics = [0.78, 0.9, 0.62, 0.86][section];
+  const root = ROOTS[theme];
+  const scale = SCALES[theme] ?? MAJOR;
+  const degree = (bridge ? BRIDGE_CHORDS : PROGRESSION)[pos];
+  const bass = fold(root + deg(MAJOR, degree), 40);
+  const chord = [0, 2, 4].map((d) => fold(root + deg(MAJOR, degree + d), 55)).sort((a, b) => a - b);
+  const notes: MusicNote[] = [];
+  let part: MusicNote['part'] = 'melody';
+  const add = (instrument: MusicInstrument, step: number, pitches: number[], beats: number, velocity: number, pan = 0, stroke?: Stroke) => {
+    notes.push({ part, instrument, step, pitches, beats, velocity: velocity * dynamics * r.range(.94, 1.04), pan, stroke });
+  };
+  const tune = (bridge ? TUNES[theme].bridge : TUNES[theme].main)[pos];
+  // Small turns on the response are transformations of a phrase, never an unbounded random walk.
+  const melody = tune.map(([step, d, len], i) => {
+    const turn = (section === 1 || (cycle % 2 === 1 && section === 0)) && i === 1 && pos % 2 === 0 ? 1 : 0;
+    const delayed = cycle % 2 === 1 && pos === 5 && !bridge && i === 0 && step === 0;
+    return { step: step + (delayed ? 1 : 0), midi: root + deg(scale, d + turn), len: Math.max(.2, len - (delayed ? .25 : 0)) };
+  });
+  let lead: MusicInstrument = theme === 'menu' ? (bridge ? 'flute' : 'musicBox') : theme === 'italy' ? (bridge ? 'accordion' : 'mandolin')
+    : theme === 'japan' ? ((pos < 4) !== (section % 2 === 1) ? 'koto' : 'flute')
+    : theme === 'mexico' ? (bridge ? 'flute' : 'marimba') : theme === 'usa' ? (section === 1 ? 'epiano' : 'vibes')
+    : theme === 'india' ? (bridge ? 'flute' : 'sitar') : (pos < 4 && !bridge ? 'erhu' : 'guzheng');
+  // An occasional later pass hands the opening melody to a softer instrument.
+  if (cycle % 3 === 2 && section === 0 && theme === 'italy') lead = 'musicBox';
+  for (const n of melody) add(lead, n.step, [n.midi], n.len, .86, .12);
+  part = 'support';
 
-/** Mexican fiesta in C: marimba in parallel thirds with rolls, guitarrón, shaker; 6/8 against 3/4. */
-const mexico: ThemeSpec = {
-  bpm: 100, beats: 2, sub: 3, swing: 0, level: 1.25,
-  make() {
-    const root = 60; // C4
-    const A = [0, 3, 4, 0, 0, 3, 4, 0]; // I IV V7 I I IV V7 I
-    const B = [0, 5, 3, 4, 0, 5, 1, 4]; // I vi IV V7 I vi ii V7
-    // melody rhythms on the six-step bar: [step, length in steps, roll]
-    const SIX: [number, number, boolean][][] = [
-      [[0, 1, false], [1, 1, false], [2, 1, false], [3, 1, false], [4, 1, false], [5, 1, false]],
-      [[0, 2, false], [2, 1, false], [3, 2, false], [5, 1, false]],
-      [[0, 3, true], [3, 3, true]],
-      [[0, 1, false], [1, 1, false], [2, 1, false], [3, 3, true]],
-    ];
-    const THREE: [number, number, boolean][][] = [
-      [[0, 2, false], [2, 2, false], [4, 2, false]],
-      [[0, 2, true], [2, 1, false], [3, 1, false], [4, 2, false]],
-      [[0, 1, false], [1, 1, false], [2, 2, false], [4, 2, true]],
-    ];
-    let mel = 9; // scale index above C4 (7 = C5)
-    let plan = SIX[0];
-    let roll: { m: number; m2: number; until: number } | null = null;
-    return {
-      step(p, b, s, t) {
-        const r = b.r;
-        const d = (b.alt ? B : A)[b.pos];
-        const dom = d === 4;
-        const three = b.n % 2 === 1; // sesquialtera: a bar of 6/8, then a bar of 3/4
-        if (s === 0) {
-          plan = b.pos % 4 === 3 ? [[0, 6, true]] : r.pick(three ? THREE : SIX);
-          if (b.alt && b.pos === 4 && r.chance(0.5)) plan = [];
-        }
-        // guitarrón: the root on one, then the fifth (6/8) or third and fifth (3/4)
-        const bi = (three ? [0, 2, 4] : [0, 3]).indexOf(s);
-        if (bi >= 0) {
-          const which = bi === 0 ? d : three && bi === 1 ? d + 2 : d + 4;
-          p.guitarron(t, fold(root + deg(MAJOR, which) - 24, 38), bi === 0 ? 1 : 0.75);
-        }
-        // the vamp: third and fifth on the off-steps
-        if ((three ? [1, 3, 5] : [1, 2, 4, 5]).includes(s)) {
-          const lo = fold(root + deg(MAJOR, d + 2), 57);
-          p.dyad(t, [lo, lo + deg(MAJOR, d + 4) - deg(MAJOR, d + 2)], s % 2 ? 0.5 : 0.42, -0.25);
-        }
-        const accent = three ? s % 2 === 0 : s % 3 === 0;
-        p.shaker(t, accent ? 1 : 0.55, 0.3);
-        if (r.chance(0.4)) p.shaker(t + b.step / 2, 0.3, 0.35);
-        for (const [st, len, rl] of plan) {
-          if (st !== s) continue;
-          if (st === 0 || (!three && st === 3)) mel = nearest(mel + r.pick([-2, -1, 0, 1, 2]), chordTones(d, 7, 14, dom ? 4 : 3), r);
-          else mel = clamp(mel + r.pick([-2, -1, -1, 1, 1, 2]), 7, 14);
-          const m = root + deg(MAJOR, mel);
-          const m2 = root + deg(MAJOR, mel - 2); // the second mallet a third below
-          if (rl) roll = { m, m2, until: t + len * b.step - 0.03 };
-          else {
-            roll = null;
-            p.marimba(t, m, 0.8, 0.2, 0.55);
-            if (r.chance(0.75)) p.marimba(t, m2, 0.55, -0.1, 0.5, false);
-          }
-        }
-        if (roll) {
-          for (let j = 0; j < 3; j++) {
-            const tt = t + (j * b.step) / 3;
-            if (tt >= roll.until) break;
-            p.marimba(tt, roll.m, j === 0 ? 0.65 : 0.5, 0.2, 0.14, j === 0, j > 0);
-            p.marimba(tt, roll.m2, j === 0 ? 0.45 : 0.35, -0.1, 0.14, false, true);
-          }
-        }
-      },
-    };
-  },
-};
+  if (theme === 'menu') {
+    if (pos % 2 === 0 || cadence) add('softBass', 0, [bass], cadence ? 2 : 2.5, .65);
+    if (pos % 2 === 0) add('pad', 0, chord.slice(1), 4.8, .55);
+    if (!cadence && !bridge) { add('musicBox', 2, [chord[0]], .8, .34, -.2); add('musicBox', 4, [chord[2]], .8, .28, -.2); }
+  } else if (theme === 'italy') {
+    add('accBass', 0, [bass], cadence ? 1.8 : .8, .72);
+    if (!cadence) add('accordion', 2, chord, bridge ? 1.5 : .7, bridge ? .52 : .66, -.18);
+    if (!bridge && pos % 2 === 0 && pos !== 6) add('mandolin', 5, [chord[2]], .35, .32, -.25);
+    if (section === 1 && pos === 4) add('softBass', 4, [bass + 7], .65, .5);
+  } else if (theme === 'japan') {
+    const low = root - 12 + deg(scale, (bridge ? [2,4,3,0,2,3,1,0] : [0,2,3,4,0,2,1,0])[pos]);
+    if (pos % 2 === 0 || cadence) add('softBass', 0, [low - 12], 2.5, .5);
+    add('koto', 0, [low], 1.2, .56, -.23);
+    if (!cadence && lead === 'flute') { add('koto', 3, [low + 12], .9, .28, -.3); if (!bridge) add('koto', 6, [low + 7], .7, .25, -.2); }
+    if (section === 1 && pos % 4 === 0) add('drum', 0, [110,62], .45, .25);
+  } else if (theme === 'mexico') {
+    add('guitarron', 0, [bass], .8, .68);
+    if (!cadence && !bridge) add('guitarron', 3, [fold(bass + 7, 40)], .65, .48);
+    if (!cadence) add('dyad', bridge ? 3 : 1, chord.slice(1), .5, .36, -.25);
+    if (!bridge && !cadence) for (const step of [0,2,3,5]) add('shaker', step, [], .12, step === 0 ? .3 : .18, .3);
+    if (section === 3 && pos === 6 && cycle % 2 === 0) add('marimba', 5, [root + deg(MAJOR, 1)], .25, .4, -.2);
+  } else if (theme === 'usa') {
+    const roots = bridge ? [41,41,48,45,50,43,43,48] : [48,45,41,43,48,50,43,48];
+    const low = roots[pos];
+    const third = pos === 1 || pos === 5 ? 3 : 4;
+    const jazz = [low + third + 12, low + 19, low + (pos === 3 || pos === 6 ? 22 : 21)];
+    const next = roots[(pos + 1) % 8];
+    add('upright', 0, [low], .85, .72);
+    if (!cadence) {
+      add('upright', 4, [fold(low + 7, 40)], .8, .5);
+      if (!bridge) { add('upright', 2, [low + third], .75, .48); add('upright', 6, [fold(next - 1, 40)], .7, .44); }
+      add('epiano', pos % 2 ? 1 : 0, jazz, bridge ? 1.7 : 1.1, .38, -.15);
+      if (section === 1 || section === 3) add('epiano', 5, jazz.slice(0,2), .45, .24, -.12);
+      if (!bridge && pos % 2 === 0) { add('brush', 2, [], .1, .23, .15); add('brush', 6, [], .1, .2, .15); add('ride', 3, [], .15, .2, .22); }
+    }
+  } else if (theme === 'india') {
+    if (pos % 2 === 0) { add('tanpura', 0, [38], 3, .52, -.25); add('tanpura', 4, [45], 3, .42, -.2); }
+    if (pos === 1 || pos === 4 || cadence) add('softBass', 0, [root - 24 + deg(scale, cadence ? 0 : degree)], 2.2, .48);
+    if (!cadence) {
+      add('tabla', 0, [root], .2, .35, 0, 'na');
+      add('tabla', bridge ? 5 : 4, [root], .2, .3, -.1, 'ge');
+      if (!bridge && pos % 2 === 0) { add('tabla', 3, [root], .12, .21, .15, 'ti'); add('tabla', 6, [root], .15, .25, .15, 'tin'); }
+    }
+  } else {
+    const low = root - 12 + deg(scale, (bridge ? [2,4,0,-1,2,3,-2,0] : [0,-1,2,-2,0,2,-2,0])[pos]);
+    add('guzheng', 0, [low], 1.8, .52, -.23);
+    if (!cadence && lead === 'erhu') { add('guzheng', 2, [low + 7], .8, .27, -.25); add('guzheng', 5, [low + 12], .8, .25, -.2); }
+    if (!bridge && pos % 4 === 0) add('woodblock', 4, [], .1, .2);
+    if (section === 3 && pos === 6 && cycle % 2 === 0) add('guzheng', 7, [root + deg(scale, 2)], .4, .32, -.3);
+  }
+  return notes.sort((a,b) => a.step - b.step);
+}
 
-/** 1950s diner jukebox in C: walking bass, electric-piano comping, vibes licks, brushes; swung. */
-const usa: ThemeSpec = {
-  bpm: 112, beats: 4, sub: 2, swing: 0.3, level: 1.2,
-  make() {
-    interface Chord { root: number; third: number; v: number[] }
-    const CH: Record<string, Chord> = {
-      C6: { root: 48, third: 4, v: [64, 67, 69] },
-      Am7: { root: 45, third: 3, v: [60, 64, 67] },
-      Dm7: { root: 50, third: 3, v: [60, 65, 69] },
-      G7: { root: 43, third: 4, v: [59, 65, 67] },
-      C7: { root: 48, third: 4, v: [64, 67, 70] },
-      F6: { root: 41, third: 4, v: [57, 62, 65] },
-      Fm6: { root: 41, third: 3, v: [56, 62, 65] },
-      A7: { root: 45, third: 4, v: [61, 64, 67] },
-    };
-    const A = ['C6', 'Am7', 'Dm7', 'G7', 'C6', 'Am7', 'Dm7', 'G7'];
-    const B = ['C6', 'C7', 'F6', 'Fm6', 'C6', 'A7', 'Dm7', 'G7'];
-    // comping rhythms: [eighth step, length in beats]; step 7 anticipates the next chord
-    const COMP: [number, number][][] = [[[0, 1.2], [3, 0.45]], [[1, 0.45], [5, 0.45]], [[2, 0.45], [6, 0.45]], [[0, 2.5], [7, 0.4]]];
-    const PENT = [0, 2, 4, 7, 9];
-    let comp = COMP[0];
-    let lead: number[] = [];
-    let li = 6; // pentatonic index above C4 (5 = C5)
-    let bass = 48;
-    return {
-      step(p, b, s, t) {
-        const r = b.r;
-        const prog = b.alt ? B : A;
-        const ch = CH[prog[b.pos]];
-        const nx = CH[prog[(b.pos + 1) % 8]];
-        if (s === 0) {
-          comp = r.pick(COMP);
-          const plays = b.pos % 4 < 2 !== b.alt; // call and response with the comping
-          lead = [];
-          if (plays) for (let i = 0; i < 8; i++) if (r.chance(i % 2 ? 0.45 : 0.3)) lead.push(i);
-        }
-        if (s % 2 === 0) {
-          // walking bass: root, chord tone, chord tone, then an approach to the next root
-          const beat = s / 2;
-          const near = (x: number) => x + 12 * Math.round((bass - x) / 12);
-          let m =
-            beat === 0 ? near(ch.root)
-            : beat === 1 ? near(ch.root + r.pick([ch.third, 7, 2]))
-            : beat === 2 ? near(ch.root + r.pick([7, ch.third, 9]))
-            : near(nx.root) + r.pick([-1, 1, -5, 2]);
-          while (m < 38) m += 12;
-          while (m > 55) m -= 12;
-          bass = m;
-          p.upright(t, m, b.beat, beat === 0 ? 0.95 : 0.8);
-        }
-        if (s === 7 && r.chance(0.12)) p.upright(t, bass, b.beat * 0.4, 0.4); // a ghosted skip note
-        for (const [st, len] of comp) if (st === s) p.epiano(t, st === 7 ? nx.v : ch.v, len * b.beat, st === 0 ? 0.75 : 0.6);
-        if (lead.includes(s)) {
-          li = clamp(li + r.pick([-2, -1, -1, 1, 1, 2]), 3, 10);
-          const m = 60 + deg(PENT, li);
-          if (m % 12 === 4 && r.chance(0.35)) p.vibes(t - 0.05, m - 1, 0.35, 0.25); // blue-note grace into E
-          p.vibes(t, m, s % 2 ? 0.6 : 0.75, 0.25);
-        }
-        if (s === 0 || s === 4) {
-          p.kick(t, s === 0 ? 0.8 : 0.55);
-          p.sweep(t, b.beat * 2, 0.7);
-        }
-        if (s === 2 || s === 6) p.brush(t, 0.8, 0.15);
-        if (s !== 1 && s !== 5) p.ride(t, s === 3 || s === 7 ? 0.45 : s === 2 || s === 6 ? 0.8 : 0.6);
-      },
-    };
-  },
-};
+function performMusicNote(p: Song, note: MusicNote, t: number, beat: number): void {
+  const [m = 60, m2 = 0] = note.pitches;
+  const len = note.beats * beat;
+  const v = note.velocity;
+  const pan = note.pan;
+  switch (note.instrument) {
+    case 'musicBox': p.musicBox(t,m,v,pan); break;
+    case 'pad': p.pad(t,note.pitches,len,v); break;
+    case 'softBass': p.softBass(t,m,len,v); break;
+    case 'mandolin': p.mandolin(t,m,v,Math.min(.85,len),pan); break;
+    case 'accordion': p.accordion(t,note.pitches,len,v); break;
+    case 'accBass': p.accBass(t,m,len,v); break;
+    case 'koto': p.koto(t,m,v,pan,undefined,Math.min(1.8,len+.25)); break;
+    case 'flute': p.flute(t,m,len,v,pan); break;
+    case 'drum': p.drum(t,m,m2,v,len); break;
+    case 'marimba': p.marimba(t,m,v,pan,Math.min(.9,len+.15)); break;
+    case 'dyad': p.dyad(t,note.pitches,v,pan); break;
+    case 'guitarron': p.guitarron(t,m,v); break;
+    case 'shaker': p.shaker(t,v,pan); break;
+    case 'upright': p.upright(t,m,len,v); break;
+    case 'epiano': p.epiano(t,note.pitches,len,v); break;
+    case 'vibes': p.vibes(t,m,v,pan); break;
+    case 'brush': p.brush(t,v,pan); break;
+    case 'ride': p.ride(t,v); break;
+    case 'kick': p.kick(t,v); break;
+    case 'tanpura': p.tanpura(t,m,v); break;
+    case 'sitar': p.sitar(t,m,len,v,undefined,pan); break;
+    case 'tabla': p.tabla(t,note.stroke ?? 'na',v,m); break;
+    case 'guzheng': p.guzheng(t,m,v,pan,Math.min(2,len+.2)); break;
+    case 'erhu': p.erhu(t,m,len,v,undefined,pan); break;
+    case 'woodblock': p.woodblock(t,true,v); break;
+  }
+}
 
-/** Indian evening (raga Yaman on D): tanpura drone, sitar phrases with slides, soft tabla in keherwa. */
-const india: ThemeSpec = {
-  bpm: 64, beats: 4, sub: 2, swing: 0.05, level: 1.8,
-  make() {
-    const sa = 62; // D4
-    const Y = [0, 2, 4, 6, 7, 9, 11];
-    const TAN = [45, 50, 50, 38]; // Pa, Sa, Sa, low Sa
-    const THEKA = ['dha', 'ge', 'na', 'ti', 'na', 'ka', 'dhi', 'na'] as const;
-    const RHY: [number, number][][] = [
-      [[0, 2], [3, 1], [4, 2], [6, 2]],
-      [[0, 3], [3, 1], [4, 4]],
-      [[1, 1], [2, 2], [4, 1], [5, 3]],
-      [[0, 4], [4, 4]],
-      [[0, 2], [2, 2], [4, 2], [6, 1], [7, 1]],
-    ];
-    const REST = [0, 2, 4, 6]; // Sa, Ga, Pa, Ni: notes a phrase likes to settle on
-    let mel = 2; // Yaman index above Sa
-    let plan: [number, number][] = [];
-    let taan = false;
-    return {
-      step(p, b, s, t) {
-        const r = b.r;
-        if (s % 2 === 0) p.tanpura(t + r.range(0, 0.03), TAN[s / 2], s === 6 ? 0.85 : 0.7);
-        // tabla
-        if (b.pos % 4 === 3 && s >= 6) {
-          p.tabla(t, 'ti', 0.6, sa);
-          p.tabla(t + b.step / 2, 'ti', 0.45, sa);
-        } else if ((s === 1 || s === 5) && r.chance(0.12)) p.tabla(t, 'gew', 0.7, sa);
-        else {
-          const st = THEKA[s];
-          if (st === 'dha' || st === 'dhi') {
-            p.tabla(t, st === 'dha' ? 'na' : 'tin', 0.75, sa);
-            p.tabla(t, 'ge', 0.7, sa);
-          } else if (st !== 'ge' || r.chance(0.7)) p.tabla(t, st, s % 2 ? 0.5 : 0.6, sa);
-        }
-        // sitar
-        if (s === 0) {
-          const rest = (b.pos % 4 === 3 && r.chance(0.6)) || b.n === 0;
-          taan = !rest && b.pos % 4 === 2 && r.chance(0.2);
-          plan = rest ? [] : r.pick(RHY).filter(([st]) => !taan || st < 6);
-          if (b.pos === 0 && (b.alt || r.chance(0.3))) {
-            for (let i = 0; i < 8; i++) p.harp(t + 0.02 + i * 0.04, sa + 12 + deg(Y, i), 0.6 + i * 0.04, -0.4 + i * 0.1, 0.8);
-          }
-        }
-        for (const [st, len] of plan) {
-          if (st !== s) continue;
-          let next = clamp(mel + r.pick([-2, -1, -1, 1, 1, 2, 3]), -3, 9);
-          if (st === plan[plan.length - 1][0] && !REST.includes(((next % 7) + 7) % 7)) next = clamp(next + (r.chance(0.5) ? 1 : -1), -3, 9);
-          const m = sa + deg(Y, next);
-          let from: number | undefined;
-          if (next > mel && r.chance(0.4)) from = sa + deg(Y, next - 1); // meend: pulled up from below
-          else if (r.chance(0.15)) from = sa + deg(Y, next + 1); // kan: a touch of the note above
-          p.sitar(t, m, len * b.step, 0.8, from, 0.1);
-          mel = next;
-        }
-        if (taan && s >= 6) {
-          // a quick run (sixteenths) down to the phrase's resting note
-          for (let j = 0; j < 2; j++) p.sitar(t + (j * b.step) / 2, sa + deg(Y, mel + 3 - (s - 6) * 2 - j), 0.25, 0.6, undefined, 0.1);
-        }
-      },
-    };
+const THEMES = Object.fromEntries((Object.keys(SETTINGS) as MusicTheme[]).map((theme) => [theme, {
+  ...SETTINGS[theme],
+  make(seed: number): ThemeRun {
+    let bar = -1;
+    let notes: MusicNote[] = [];
+    return { step(p,b,s,t) {
+      if (bar !== b.n) { bar = b.n; notes = composeMusicBar(theme,bar,seed); }
+      for (const note of notes) if (note.step === s) performMusicNote(p,note,t,b.beat);
+    } };
   },
-};
+}])) as Record<MusicTheme, ThemeSpec>;
 
-/** Chinese teahouse on D major pentatonic: guzheng with glissandi, erhu line, soft woodblock. */
-const china: ThemeSpec = {
-  bpm: 70, beats: 4, sub: 2, swing: 0, level: 1.3,
-  make() {
-    const root = 62; // D4
-    const P5 = [0, 2, 4, 7, 9];
-    const BASS_A = [0, -3, 2, -5, 0, -3, -5, 0]; // D B E A D B A D
-    const BASS_B = [0, 4, -3, 2, 0, -3, -5, 0]; // D F# B E D B A D
-    const ERHU: [number, number][][] = [[[0, 8]], [[0, 4], [4, 4]], [[0, 3], [3, 1], [4, 4]], [[0, 6], [6, 2]]];
-    const ZHENG = [[0, 2, 3, 4, 6], [1, 2, 4, 6, 7], [0, 3, 4, 6], [0, 1, 2, 4, 5, 6]];
-    const FLOW = [0, 7, 12, 7, 19, 7, 12, 7]; // rolling fifth and octave above the bass
-    let mel = 6; // pentatonic index above D4 (5 = D5)
-    let prev: number | undefined;
-    let plan: [number, number][] = [];
-    let zplan: number[] = [];
-    return {
-      step(p, b, s, t) {
-        const r = b.r;
-        const low = root - 12 + (b.alt ? BASS_B : BASS_A)[b.pos];
-        const erhuBars = b.alt ? b.pos >= 4 : b.pos < 4;
-        if (s === 0) {
-          plan = erhuBars ? r.pick(ERHU) : [];
-          zplan = erhuBars ? [] : r.pick(ZHENG);
-          if (!erhuBars) prev = undefined;
-          p.guzheng(t, low, 0.85, -0.2, 2.2);
-          p.woodblock(t, true, 0.7);
-        }
-        if (s > 0 && (erhuBars || s % 2 === 0)) p.guzheng(t, low + FLOW[s], erhuBars ? 0.38 : 0.32, r.range(-0.3, 0.3), 0.9, undefined, 0, true);
-        for (const [st, len] of plan) {
-          if (st !== s) continue;
-          mel = clamp(mel + r.pick([-2, -1, -1, 1, 1, 2]), 3, 10);
-          if (b.pos % 4 === 3 && st === plan[plan.length - 1][0]) mel = nearest(mel, [3, 5, 8, 10], r); // settle on A or D
-          const m = root + deg(P5, mel);
-          p.erhu(t, m, len * b.step, 0.85, prev !== undefined && r.chance(0.6) ? prev : undefined, 0.15);
-          prev = m;
-        }
-        if (zplan.includes(s)) {
-          mel = clamp(mel + r.pick([-2, -1, -1, 1, 1, 2]), 3, 10);
-          const m = root + deg(P5, mel);
-          const bend = r.chance(0.2) ? root + deg(P5, mel - 1) : undefined; // pressed up from the string below
-          p.guzheng(t, m, 0.7, 0.2, 1.4, bend, s === zplan[zplan.length - 1] ? 14 : 0);
-        }
-        // a glissando sweeping into the next phrase
-        if (s === 7 && b.pos % 4 === 3 && r.chance(0.65)) {
-          const down = r.chance(0.6);
-          const start = t + b.step - 7 * 0.045;
-          for (let i = 0; i < 7; i++) {
-            p.guzheng(start + i * 0.045, root - 12 + deg(P5, down ? 12 - i : 2 + i), 0.3 + 0.04 * i, down ? 0.3 - i * 0.08 : -0.3 + i * 0.08, 0.45, undefined, 0, true);
-          }
-        }
-        if (s === 4 && r.chance(0.7)) p.woodblock(t, false, 0.5);
-        if (s === 6 && r.chance(0.3)) p.woodblock(t, true, 0.35);
-        if (s === 7 && r.chance(0.2)) p.woodblock(t, false, 0.3);
-      },
-    };
-  },
-};
-
-const THEMES: Record<MusicTheme, ThemeSpec> = { menu, italy, japan, mexico, usa, india, china };
+/** Render the actual score and instruments into an offline Web Audio context, without timers. */
+export function scheduleMusicPreview(context: AudioContext, theme: MusicTheme, seconds: number, seed = 7): void {
+  const engine = new AudioEngine(context);
+  const song = new Song(engine, theme, seed, true);
+  song.scheduleOffline(seconds);
+}
 
 export const audio: Audio = new AudioEngine();

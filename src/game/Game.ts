@@ -3,19 +3,15 @@ import { Sim, isBowlMove, type SimEvent } from '../core/sim';
 import { solve } from '../core/solver';
 import type { LevelDef } from '../core/types';
 import { BoardView } from '../view/BoardView';
+import { starsFor } from './stars';
+export { starsFor } from './stars';
 
 export interface GameCallbacks {
   won(stars: number, parks: number): void;
   stuck(): void;
   changed(): void;
   say(text: string): void;
-}
-
-/** Bowl uses → stars: a perfect cook (par or better) earns three. */
-export function starsFor(parks: number, par: number): number {
-  if (parks <= par) return 3;
-  if (parks <= par + 2) return 2;
-  return 1;
+  bowlInfo?(uses: number): void;
 }
 
 /**
@@ -44,6 +40,7 @@ export class Game {
       press: (id) => this.press(id),
       release: () => this.view.hideLane(),
       tap: (id) => this.tap(id),
+      bowlInfo: (uses) => this.cb.bowlInfo?.(uses),
     });
     this.view.sync(this.sim, true);
   }

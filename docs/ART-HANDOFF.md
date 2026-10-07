@@ -13,13 +13,13 @@ This is everything another agent needs to continue the icon art for Pot Luck. It
 **Done:**
 - Five sample ingredients in six candidate styles: tomato, carrot, mushroom, onion, cheese (30 images).
 - Sticker now covers **all 32 ingredients**, including a new purple onion and curved red chili. The 27 missing ingredients and onion replacement were generated locally in one batch of 28.
-- Kawaii, Watercolor and Retro Diner each retain their five samples. All 47 shipped pictures are cut out and centred in `public/art/<set>/<key>.webp`.
+- Sticker also covers **all 27 dishes**, so the free set is complete at 59 icons. This dish batch used 28 renders, including one tamale replacement.
+- Kawaii, Watercolor and Retro Diner each retain their five samples. All 74 shipped pictures are cut out and centred in `public/art/<set>/<key>.webp`.
 - Tiles, recipe tickets, map ingredient decorations and difficulty chilies use the equipped set, then Sticker, then Fluent emoji.
 - The Market, the tips economy and the per-set rendering switch work.
-- Board plates now use `dishHtml`, so dish artwork will appear as soon as it is available.
+- Board plates and map dishes use `dishHtml` and display the generated dish artwork.
 
 **Not done:**
-- **27 Sticker dish icons** remain. Get approval for this next batch.
 - The paid sets each need 54 more images to reach 59 icons. Generate them in the order the owner chooses.
 
 ## Ground rules from the owner
@@ -45,8 +45,10 @@ This is everything another agent needs to continue the icon art for Pot Luck. It
   - the log goes to `<outdir>/_gen.log`, one line per image with its time.
 - **Settings:**
   - 640×640 and 8 steps (the defaults; positional args 3–5 override width, height and steps);
-  - seed 7 for everything so far.
-- **Speed on this Mac:** the completed 28-image batch took about 25 minutes, with individual images taking 40–90 s. Load can increase that time.
+  - ingredients were generated at 640×640; the first nine dishes at 512×512 and the remaining 18 at 384×384, all with 8 steps;
+  - seed 7, except the accepted Sticker tamale uses seed 11, recorded in `SEEDS` in `sets.py`;
+  - every shipped WebP is 192×192 regardless of source resolution.
+- **Speed on this Mac:** the ingredient batch took about 25 minutes, with individual images taking 40–90 s. Dishes at 512×512 took 43–59 s each; 384×384 took 13–20 s. The smaller sources passed the final 192px WebP and 36px plate preview checks.
 
 Run (installs mflux into a throwaway uv env, nothing to set up):
 
@@ -81,13 +83,28 @@ Build a queue:
 
 ```bash
 python3 scripts/art/sets.py sticker --only ingredients > .cache/art/sets.jsonl   # 27 jobs
-python3 scripts/art/sets.py sticker --only dishes >> .cache/art/sets.jsonl       # 27 more (next batch)
+python3 scripts/art/sets.py sticker --only dishes > .cache/art/dishes.jsonl     # the completed 27-dish prompt set
 python3 scripts/art/sets.py sticker --all ...                                    # also redo the 5 samples
 python3 scripts/art/sets.py sticker --only ingredients --redo onion             # the completed 28-job prompt set
 ```
 
 The ids are `<set>-<key>`, which is what the cut step and the game expect. The five sample keys are skipped by default because they already exist in `.cache/art/styles/`.
 `--redo key1,key2` includes specific sample keys in the queue; it does not delete cached PNGs.
+
+The first nine dish keys are soup, stew, curry, salad, pasta, ramen, omelette, sandwich and pizza.
+They retain their finished 512px images. The other dishes use 384px sources. To reproduce those
+source sizes in a fresh cache:
+
+```bash
+mkdir -p .cache/art/sets
+python3 scripts/art/sets.py sticker --only dishes > .cache/art/dishes.jsonl
+head -n 9 .cache/art/dishes.jsonl > .cache/art/dishes-512.jsonl
+uv run --no-project --with mflux python scripts/art/generate.py .cache/art/dishes-512.jsonl .cache/art/sets 512 512 8
+uv run --no-project --with mflux python scripts/art/generate.py .cache/art/dishes.jsonl .cache/art/sets 384 384 8
+```
+
+The 384px run skips the nine PNGs already rendered. The tamale prompt specifies smooth masa
+in a tan dried husk; the initial ear-of-corn result was rejected and remains in `.cache/art/rejected/`.
 
 **Redoing one bad picture:** delete `.cache/art/sets/<id>.png`, change that line's `seed` in the queue (e.g. 7 → 11) or tweak its subject, and run the generator again; it only renders missing files.
 
@@ -97,6 +114,9 @@ The ids are `<set>-<key>`, which is what the cut step and the game expect. The f
 python3 scripts/art/cut.py      # needs numpy + pillow; otherwise: uv run --no-project --with pillow --with numpy python scripts/art/cut.py
 python3 scripts/art/cut.py --changed  # cut only new/changed sources; keep the manifest unchanged when its contents match
 python3 scripts/art/contact-sheet.py sticker  # → .cache/art/sticker-ingredients-contact.png
+python3 scripts/art/contact-sheet.py sticker --only dishes  # → .cache/art/sticker-dishes-contact.png
+python3 scripts/art/contact-sheet.py sticker --only all     # → .cache/art/sticker-all-contact.png
+python3 scripts/art/contact-sheet.py sticker --only dishes --raw  # review pending PNGs without publishing them
 ```
 
 `scripts/art/cut.py` reads `.cache/art/styles/*.png` and then `.cache/art/sets/*.png` (later wins) for the sets sticker, kawaii, watercolor and retro. For each picture it does five things:
@@ -111,7 +131,9 @@ python3 scripts/art/contact-sheet.py sticker  # → .cache/art/sticker-ingredien
    - `_review/style/img/<set>-<key>.webp` for the review page.
 5. **Rewrites the manifest** `src/ui/art.generated.ts` (`ART_KEYS`: which keys each set has). The game only requests files listed there.
 
-It is slow-ish: pure Python flood fill, about 4 minutes for 20 pictures on a busy machine.
+The flood fill uses pure Python. `--changed` skips existing cutouts and leaves the manifest untouched
+when its contents match. Contact sheets show each dish on a plate with a 36px inset; `--raw` applies
+the same 192px crop and WebP compression in memory before displaying pending sources.
 
 Emoji icons get the same optical centring at build time in `scripts/build-icons.ts` (resvg renders each food SVG and the viewBox is fitted).
 
@@ -138,7 +160,7 @@ sheet.convert('RGB').save('/tmp/sheet.jpg', quality=85)
 **Tests:** `npx vitest run`.
 - `tests/economy.test.ts` checks that every manifest key is a real ingredient or dish and that its file exists. It also checks that every paid set has its 5 preview pictures (tomato, carrot, mushroom, onion, cheese).
 - Run `npx tsc --noEmit -p .` too.
-- The manifest test requires every ingredient to exist in the free Sticker set.
+- The manifest tests require every ingredient and every dish to exist in the free Sticker set.
 
 **Known looks:**
 - Watercolor keeps a soft grey ground wash under objects; it's part of the style.

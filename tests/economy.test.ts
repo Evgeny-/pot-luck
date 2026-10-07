@@ -204,6 +204,11 @@ describe('art manifest', () => {
     for (const { key } of INGREDIENTS) expect(ART_KEYS.sticker, `sticker/${key}`).toContain(key);
   });
 
+  it('the free sticker set has every dish picture', async () => {
+    const ART_KEYS = await realKeys();
+    for (const key of Object.keys(DISHES)) expect(ART_KEYS.sticker, `sticker/${key}`).toContain(key);
+  });
+
   it('lists only real ingredient or dish keys, and every file exists', async () => {
     const ART_KEYS = await realKeys();
     for (const [set, keys] of Object.entries(ART_KEYS)) {
