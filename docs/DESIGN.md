@@ -8,6 +8,12 @@ This document is the current state of the rules, the recommended rule set (backe
 [EXPERIMENTS.md](EXPERIMENTS.md)), how difficulty is measured, the campaign's shape, and what is
 still open.
 
+<p>
+  <img src="screenshots/level-13-board.png" width="300" alt="Level 13: four pots, a 6×6 board, recipe strips with the next ingredient ringed in green">
+  <img src="screenshots/level-38.jpg" width="200" alt="Level 38: two pots cooking two dishes each, turn pads and a skewer">
+  <img src="screenshots/map-curve.jpg" width="200" alt="Level map in debug mode with the sawtooth difficulty curve">
+</p>
+
 ## Rules (as built)
 
 - **Tiles.** Each tile has an ingredient and an arrow.
