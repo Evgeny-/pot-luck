@@ -72,6 +72,7 @@ Read [the design notes](docs/DESIGN.md) for the campaign and mechanics.
 [The art handoff](docs/ART-HANDOFF.md) covers prompts and the local generation pipeline.
 [Experiments](docs/EXPERIMENTS.md) document how the rules affect puzzle depth.
 [Deployment](docs/DEPLOYMENT.md) explains the publishing workflow.
+[App icons](docs/APP-ICONS.md) covers the favicon and mobile home-screen artwork.
 
 Asset credits and licence notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 Sound is synthesized with the Web Audio API. [The soundtrack notes](docs/AUDIO.md) describe the

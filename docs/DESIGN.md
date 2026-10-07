@@ -178,7 +178,7 @@ The goal was a look of its own, so that Pot Luck and Pixel Picnic feel like sibl
 - **Tiles:** enamel, each in its ingredient's colour with a white glaze rim and a cream arrow
   badge.
 - **Pots:** order tickets with a plate. Food lands on the required recipe ingredient, then its tick appears. Mobile recipe icons are larger. Each ticket shows one recipe; the next appears when the current dish is complete.
-- **Board:** warm wood for each cuisine, with curved grain, faint knots and a routed groove around the rim.
+- **Board:** warm wood for each cuisine, with curved grain, faint knots and a routed groove around the rim. Sides without recipes stay clear of extra rails.
 - **Storage:** a ceramic bowl with an oval opening and centered spaces, or a glass jar with a red cap. The jar has a wider neck, soft glass highlights and a badge on the next ingredient, preserving the last-in, first-out rule. A small single-line counter shows total uses. Tap it for the level's star ranges; the vessel supplies the context without another label or help icon.
 - **Actions:** enamel buttons with readable Undo, Hint and Restart labels, beneath the board on phones and beside it on wide screens.
 - **Finished dishes:** a small green check at the plate's edge leaves the dish picture visible. Each plate centers along the edge when its ingredient strip disappears.
