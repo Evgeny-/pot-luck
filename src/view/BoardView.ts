@@ -27,6 +27,8 @@ export interface BoardHandlers {
 
 const GAP = 9;
 const PAD = 8;
+const USAGE_WIDTH = 84;
+const USAGE_BESIDE = USAGE_WIDTH + 12;
 
 /** A ceramic vessel with a visible oval opening, curved sides and a small foot. */
 function bowlShell(width: number, height: number, openingHeight: number): string {
@@ -241,7 +243,7 @@ export class BoardView {
     const coreRoom = () => midH - topBand - bottomBand - (cap && !side ? this.bowlHeight(this.spot) + storageGap : 0);
     const storage = this.bowlDimensions(this.spot, false);
     // A crowded phone can keep the counter beside the vessel without reducing food sizes.
-    if (cap && !side && coreRoom() < Math.max(hh * cell + 2 * PAD, minimumSideHeight) && storage.width + 136 <= areaW - 8) this.usageBeside = true;
+    if (cap && !side && coreRoom() < Math.max(hh * cell + 2 * PAD, minimumSideHeight) && storage.width + USAGE_BESIDE <= areaW - 8) this.usageBeside = true;
     for (let pass = 0; pass < 2; pass++) {
       const room = coreRoom();
       this.recipeGaps = this.recipeGaps.map((gap, i) => {
@@ -341,9 +343,9 @@ export class BoardView {
       Object.assign(this.bowlEl.style, { left: `${x}px`, top: `${top + bh / 2}px`, transform: 'translate(-50%, -50%)' });
     } else {
       const bowlTop = coreTop + coreH + bottomBand + storageGap;
-      const groupWidth = this.usageBeside ? bowlSize.width + 136 : Math.max(bowlSize.width, 124);
+      const groupWidth = this.usageBeside ? bowlSize.width + USAGE_BESIDE : Math.max(bowlSize.width, USAGE_WIDTH);
       const center = Math.max(fr.left + groupWidth / 2 + 4, Math.min(W - fr.right - groupWidth / 2 - 4, left + bw / 2));
-      Object.assign(this.bowlEl.style, { left: `${center - (this.usageBeside ? 68 : 0)}px`, top: `${bowlTop}px`, transform: 'translate(-50%, 0)' });
+      Object.assign(this.bowlEl.style, { left: `${center - (this.usageBeside ? USAGE_BESIDE / 2 : 0)}px`, top: `${bowlTop}px`, transform: 'translate(-50%, 0)' });
     }
     for (const el of [this.tieUnder, this.tieOver]) {
       el.setAttribute('width', String(W));
@@ -632,7 +634,7 @@ export class BoardView {
     }
     const word = jar ? 'Jar' : 'Bowl';
     const par = this.level.stats?.par ?? 0;
-    this.bowlUsage.innerHTML = `<span class="usage-count"><span>${word} · <strong>${sim.parks}</strong> ${sim.parks === 1 ? 'use' : 'uses'}</span><span class="usage-info-dot" aria-hidden="true">?</span></span><span class="usage-goal">3★ · up to ${par} ${par === 1 ? 'use' : 'uses'}</span>`;
+    this.bowlUsage.innerHTML = `<strong>${sim.parks}</strong><span>${sim.parks === 1 ? 'use' : 'uses'}</span>`;
     this.bowlUsage.setAttribute('aria-label', `${word} used ${sim.parks} ${sim.parks === 1 ? 'time' : 'times'}. Three stars allow up to ${par} ${par === 1 ? 'use' : 'uses'}. Show star scoring.`);
     this.bowlUsage.title = 'How storage use affects stars';
     this.bowlEl.append(this.bowlUsage);
