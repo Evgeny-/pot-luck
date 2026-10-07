@@ -3,21 +3,23 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Resvg, type RenderedImage } from '@resvg/resvg-js';
 
 const source = readFileSync('public/favicon.svg', 'utf8');
+// Home-screen launchers apply their own masks to a full-bleed background.
+const fullBleedSource = source.replace(' rx="14"', '');
 const background = [255, 244, 215];
 const out = 'public/icons';
 mkdirSync(out, { recursive: true });
 mkdirSync('.cache/app-icons', { recursive: true });
 
-function render(svg: string, size: number): RenderedImage {
+function render(svg: string, size: number, opaque = false): RenderedImage {
   const image = new Resvg(svg, { fitTo: { mode: 'width', value: size }, font: { loadSystemFonts: false } }).render();
   const pixels = image.pixels;
   for (let i = 3; i < pixels.length; i += 4) {
-    if (pixels[i] !== 255) throw new Error(`The ${size}px icon contains transparency`);
+    if (opaque && pixels[i] !== 255) throw new Error(`The ${size}px icon must be opaque`);
   }
   return image;
 }
 
-/** ICO contains bottom-up 32-bit BGRA DIBs and an opaque, padded AND mask. */
+/** ICO contains bottom-up 32-bit BGRA DIBs and a padded transparency mask. */
 function ico(images: RenderedImage[]): Buffer {
   const entries = Buffer.alloc(6 + images.length * 16);
   entries.writeUInt16LE(1, 2);
@@ -26,7 +28,8 @@ function ico(images: RenderedImage[]): Buffer {
   let offset = entries.length;
   images.forEach((image, index) => {
     const size = image.width;
-    const maskBytes = Math.ceil(size / 32) * 4 * size;
+    const maskStride = Math.ceil(size / 32) * 4;
+    const maskBytes = maskStride * size;
     const payload = Buffer.alloc(40 + size * size * 4 + maskBytes);
     payload.writeUInt32LE(40, 0);
     payload.writeInt32LE(size, 4);
@@ -38,10 +41,17 @@ function ico(images: RenderedImage[]): Buffer {
     for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
       const src = ((size - 1 - y) * size + x) * 4;
       const dst = 40 + (y * size + x) * 4;
-      payload[dst] = pixels[src + 2];
-      payload[dst + 1] = pixels[src + 1];
-      payload[dst + 2] = pixels[src];
-      payload[dst + 3] = 255;
+      // Resvg exposes premultiplied RGB; ICO DIBs store straight-alpha channels.
+      const alpha = pixels[src + 3];
+      const channel = (index: number) => alpha === 0 ? 0 : Math.min(255, Math.round(pixels[src + index] * 255 / alpha));
+      payload[dst] = channel(2);
+      payload[dst + 1] = channel(1);
+      payload[dst + 2] = channel(0);
+      payload[dst + 3] = alpha;
+      if (alpha < 128) {
+        const maskOffset = 40 + size * size * 4 + y * maskStride + Math.floor(x / 8);
+        payload[maskOffset] |= 1 << (7 - x % 8);
+      }
     }
     const entry = 6 + index * 16;
     entries[entry] = size;
@@ -63,13 +73,14 @@ const favicons = [16, 32, 48].map((size) => {
 });
 writeFileSync(`${out}/favicon.ico`, ico(favicons));
 writeFileSync(`${out}/favicon-32.png`, favicons[1].asPng());
-for (const [name, size] of [['apple-touch-icon', 180], ['android-192', 192], ['android-512', 512]] as const) {
+for (const [name, size] of [['android-192', 192], ['android-512', 512]] as const) {
   writeFileSync(`${out}/${name}.png`, render(source, size).asPng());
 }
+writeFileSync(`${out}/apple-touch-icon.png`, render(fullBleedSource, 180, true).asPng());
 
 // Keep all artwork inside the central safe circle while the background remains full bleed.
-const maskableSource = source.replace('id="pot-luck-mark"', 'id="pot-luck-mark" transform="translate(6.4 6.4) scale(0.8)"');
-const maskable = render(maskableSource, 512);
+const maskableSource = fullBleedSource.replace('id="pot-luck-mark"', 'id="pot-luck-mark" transform="translate(6.4 6.4) scale(0.8)"');
+const maskable = render(maskableSource, 512, true);
 let maxRadius = 0;
 const pixels = maskable.pixels;
 for (let y = 0; y < 512; y++) for (let x = 0; x < 512; x++) {
